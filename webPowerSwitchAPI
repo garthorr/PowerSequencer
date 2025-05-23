@@ -1,5 +1,5 @@
 // ------------------
-// This code works to toggle outlet 1 on and off. 
+// This arduino sketch works to toggle outlet 1 on and off. 
 // The system config of the power strip ties all outlets to 1, so that's all you need to switch.
 // ------------------
 
