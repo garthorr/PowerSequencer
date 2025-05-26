@@ -14,6 +14,7 @@ const char* powerSwitchPass = "1234";
 // Pins
 #define BUTTON_PIN 12
 #define LED_PIN    0
+#define STATE_LED_PIN 14  // D5 = GPIO14
 
 void setup() {
   Serial.begin(115200);
@@ -23,6 +24,8 @@ void setup() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH); // LED off
+  pinMode(STATE_LED_PIN, OUTPUT);
+  digitalWrite(STATE_LED_PIN, LOW);  // off by default
 
   WiFi.begin(ssid, password);
   Serial.print("Connecting to Wi-Fi");
@@ -65,7 +68,7 @@ void toggleAllOutlets() {
 
   String command = allOn ? "OFF" : "ON";
   Serial.println("Sending command to all outlets: " + command);
-
+  digitalWrite(STATE_LED_PIN, (command == "ON") ? HIGH : LOW);
   for (int i = 1; i <= 8; i++) {
     sendOutletCommand(i, command);
   }
