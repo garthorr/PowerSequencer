@@ -1,112 +1,118 @@
-// ------------------
-// This arduino sketch works to toggle outlet 1 on and off. 
-// The system config of the power strip ties all outlets to 1, so that's all you need to switch.
-// ------------------
-
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
+#include <ArduinoJson.h>
 
-// ------------------
-// Wi-Fi Credentials
-// ------------------
+// Wi-Fi credentials
 const char* ssid     = "Sweetpea";
 const char* password = "6c3x%Bve2kU@";
 
-// ---------------------------------
-// Power Switch REST & Outlet config
-// ---------------------------------
+// Power Switch config
 const char* powerSwitchIP   = "192.168.50.90";
 const char* powerSwitchUser = "admin";
 const char* powerSwitchPass = "1234";
-const int   outletNumber    = 1;
 
-// ------------------
-// Button & LED pins
-// ------------------
-#define BUTTON_PIN 12   // your push-button (active LOW)
-#define LED_PIN    0    // onboard LED (active LOW)
+// Pins
+#define BUTTON_PIN 12
+#define LED_PIN    0
 
-String apiToken;        // will hold our session token
-
-// ------------------
-// Setup
-// ------------------
 void setup() {
   Serial.begin(115200);
+  delay(1000);
+  Serial.println("Starting up...");
 
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  pinMode(LED_PIN,    OUTPUT);
-  digitalWrite(LED_PIN, HIGH);    // LED off
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH); // LED off
 
-  // — Connect to Wi-Fi —
   WiFi.begin(ssid, password);
-  Serial.print("Wi-Fi connecting");
+  Serial.print("Connecting to Wi-Fi");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\nWi-Fi connected, IP: " + WiFi.localIP().toString());
-
-  // — Login once and grab token —
-  loginToPowerSwitch();
+  Serial.println("\nConnected. IP: " + WiFi.localIP().toString());
 }
 
-// ------------------
-// Main loop
-// ------------------
 void loop() {
-  // On button press (LOW), send ON command
   if (digitalRead(BUTTON_PIN) == LOW) {
-    Serial.println("\nButton pressed → sending ON command");
-    digitalWrite(LED_PIN, LOW);    // turn LED on
-    controlOutletON(outletNumber);
-    Serial.println("Outlet turned ON");
-    // wait until release
-    while (digitalRead(BUTTON_PIN) == LOW) delay(10);
-    Serial.println("Button released");
-    digitalWrite(LED_PIN, HIGH);   // turn LED off
+    delay(50);  // debounce
+    if (digitalRead(BUTTON_PIN) == LOW) {
+      Serial.println("Button pressed → toggling all outlets");
+      digitalWrite(LED_PIN, LOW);
+      toggleAllOutlets();
+      while (digitalRead(BUTTON_PIN) == LOW) delay(10);  // wait for release
+      digitalWrite(LED_PIN, HIGH);
+      Serial.println("Button released");
+    }
   }
 }
 
-// ------------------
-// REST: Login to get token
-// ------------------
-void loginToPowerSwitch() {
-  WiFiClient client;
-  HTTPClient http;
+void toggleAllOutlets() {
+  bool allOn = true;
+  bool outletStates[8];
 
-  String url = String("http://") + powerSwitchIP + "/restapi/login.cgi";
-  http.begin(client, url);                              // ← updated
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-Requested-With", "XMLHttpRequest");
+  if (!getAllOutletStates(outletStates, 8)) {
+    Serial.println("Failed to get outlet states.");
+    return;
+  }
 
-  String body = "{\"username\":\"" + String(powerSwitchUser)
-              + "\",\"password\":\"" + String(powerSwitchPass) + "\"}";
-  http.POST(body);
+  for (int i = 0; i < 8; i++) {
+    if (!outletStates[i]) {
+      allOn = false;
+      break;
+    }
+  }
 
-  String resp = http.getString();
-  int s = resp.indexOf("\"token\":\"") + 9;
-  int e = resp.indexOf("\"", s);
-  apiToken = resp.substring(s, e);
+  String command = allOn ? "OFF" : "ON";
+  Serial.println("Sending command to all outlets: " + command);
 
-  Serial.println("Got API token: " + apiToken);
-  http.end();
+  for (int i = 1; i <= 8; i++) {
+    sendOutletCommand(i, command);
+  }
 }
 
-// ------------------
-// REST: Turn one outlet ON
-// ------------------
-void controlOutletON(int outlet) {
+bool getAllOutletStates(bool* states, int count) {
   WiFiClient client;
   HTTPClient http;
 
-  String url = String("http://") + powerSwitchIP
-             + "/restapi/relay.cgi?outlet=" + outlet
-             + "&command=ON";
+  String url = String("http://") + powerSwitchIP + "/restapi/relay/outlets/";
+  http.begin(client, url);
+  http.setAuthorization(powerSwitchUser, powerSwitchPass);
 
-  http.begin(client, url);                              // ← updated
-  http.addHeader("Authorization", "Bearer " + apiToken);
-  http.addHeader("X-Requested-With", "XMLHttpRequest");
-  http.GET();
+  int httpCode = http.GET();
+  String payload = http.getString();
   http.end();
+
+  Serial.println("HTTP " + String(httpCode));
+  Serial.println("Raw outlet state response: " + payload);
+
+  if (httpCode != 200) return false;
+
+  StaticJsonDocument<2048> doc;
+  DeserializationError err = deserializeJson(doc, payload);
+  if (err) return false;
+
+  for (int i = 0; i < count; i++) {
+    states[i] = doc[i]["state"];
+    Serial.print("Outlet ");
+    Serial.print(i + 1);
+    Serial.print(": ");
+    Serial.println(states[i] ? "ON" : "OFF");
+  }
+
+  return true;
+}
+
+void sendOutletCommand(int outlet, String command) {
+  WiFiClient client;
+  HTTPClient http;
+
+  String url = String("http://") + powerSwitchIP + "/outlet?" + String(outlet) + "=" + command;
+  http.begin(client, url);
+  http.setAuthorization(powerSwitchUser, powerSwitchPass);
+
+  int httpCode = http.GET();
+  http.end();
+
+  Serial.println("Outlet " + String(outlet) + " → " + command + " (HTTP " + httpCode + ")");
 }
