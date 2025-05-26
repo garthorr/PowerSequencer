@@ -27,22 +27,22 @@ System Components
 
 2. Remote Stations (x4)
 
-	•	Locations: Amp Rack, Stage Rack 1, Stage Rack 2, Base Rack
-	•	Hardware:
-	•	WT32-ETH01 ESP32 module
-	•	Web Power Switch Pro (controlled via HTTP API)
-	•	Manual override push button
-	•	Local relay (optional for control fallback)
-	•	Functions:
-	•	Serve HTTP endpoints:
-	•	GET /on – powers ON the rack
-	•	GET /off – powers OFF the rack
-	•	GET /toggle – toggles current state
-	•	GET /status – returns current power state and connection mode
-	•	Poll local Web Power Switch Pro to confirm status
-	•	Respond to commands from base station
-	•	Automatically prefer Ethernet; fallback to Wi-Fi if Ethernet unavailable
-	•	Manual override button powers ON/OFF locally regardless of network state
+	•	Locations: Amp Rack, Stage Rack 1, Stage Rack 2, Base Rack  
+	•	Hardware:  
+	•	WT32-ETH01 ESP32 module  
+	•	Web Power Switch Pro (controlled via HTTP API)  
+	•	Manual override push button  
+	•	Local relay (optional for control fallback)  
+	•	Functions:  
+	•	Serve HTTP endpoints:  
+	•	GET /on – powers ON the rack  
+	•	GET /off – powers OFF the rack  
+	•	GET /toggle – toggles current state  
+	•	GET /status – returns current power state and connection mode  
+	•	Poll local Web Power Switch Pro to confirm status  
+	•	Respond to commands from base station  
+	•	Automatically prefer Ethernet; fallback to Wi-Fi if Ethernet unavailable  
+	•	Manual override button powers ON/OFF locally regardless of network state  
 
 ⸻
 
@@ -62,43 +62,43 @@ REST documentatin can be found [here](https://www.digital-loggers.com/restapi.pd
 }
 
 Failover Logic
-	•	Try primary (Ethernet) IP
-	•	If unreachable after 3 attempts, try fallback Wi-Fi IP
-	•	Mark as offline if both fail
+	•	Try primary (Ethernet) IP  
+	•	If unreachable after 3 attempts, try fallback Wi-Fi IP  
+	•	Mark as offline if both fail  
 
 ⸻
 
 Web Control Panel (Optional)
-	•	Served from Arduino Mega or a separate server
-	•	Displays:
-	•	Toggle buttons per station
-	•	Status indicators (power and connectivity)
-	•	Sends same HTTP commands as hardware
+	•	Served from Arduino Mega or a separate server  
+	•	Displays:  
+	•	Toggle buttons per station  
+	•	Status indicators (power and connectivity)  
+	•	Sends same HTTP commands as hardware  
 
 ⸻
 
-Status LED Logic (on Base Station)
-	•	Power LEDs (4):
-	•	ON: confirmed “on” from /status
-	•	OFF: confirmed “off”
-	•	Blinking/Red: no response
-	•	Connectivity LEDs (3):
-	•	Green: /status responded successfully
-	•	Red: no connection via either IP
+Status LED Logic (on Base Station)  
+	•	Power LEDs (4):  
+	•	ON: confirmed “on” from /status  
+	•	OFF: confirmed “off”  
+	•	Blinking/Red: no response  
+	•	Connectivity LEDs (3):  
+	•	Green: /status responded successfully  
+	•	Red: no connection via either IP  
 
 ⸻
 
 Developer Tasks
 
-For Each WT32-ETH01 Station
-	•	Implement Ethernet-first networking with Wi-Fi fallback
-	•	Serve RESTful API for /on, /off, /toggle, /status
-	•	Integrate Web Power Switch control (HTTP GET/POST)
-	•	Poll switch status every 5–10 sec
-	•	Monitor manual override button via GPIO
+For Each WT32-ETH01 Station  
+	•	Implement Ethernet-first networking with Wi-Fi fallback  
+	•	Serve RESTful API for /on, /off, /toggle, /status  
+	•	Integrate Web Power Switch control (HTTP GET/POST)  
+	•	Poll switch status every 5–10 sec  
+	•	Monitor manual override button via GPIO  
 
-For Arduino Mega Base Station
-	•	Periodically ping each WT32 station
-	•	Send HTTP commands on button press
-	•	Drive LED indicators based on power and connectivity
-	•	Optional: implement simple web control interface
+For Arduino Mega Base Station  
+	•	Periodically ping each WT32 station  
+	•	Send HTTP commands on button press  
+	•	Drive LED indicators based on power and connectivity  
+	•	Optional: implement simple web control interface  
