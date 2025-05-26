@@ -47,6 +47,7 @@ System Components
 Communication Flow
 
 Base Station → WT32 API Calls
+REST documentatin can be found [here](https://www.digital-loggers.com/restapi.pdf)
 	•	http://<IP>/on → turn on station
 	•	http://<IP>/off → turn off station
 	•	http://<IP>/status → returns JSON:
