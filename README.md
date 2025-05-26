@@ -10,6 +10,7 @@ This system enables centralized and remote control of four AV equipment zones us
 System Components
 
 1. Base Station (Front of House)
+
 	•	Hardware:
 	•	Arduino Mega
 	•	Wi-Fi module (ESP8266 or ESP32) for HTTP client communication
@@ -25,6 +26,7 @@ System Components
 ⸻
 
 2. Remote Stations (x4)
+
 	•	Locations: Amp Rack, Stage Rack 1, Stage Rack 2, Base Rack
 	•	Hardware:
 	•	WT32-ETH01 ESP32 module
@@ -47,7 +49,8 @@ System Components
 Communication Flow
 
 Base Station → WT32 API Calls
-REST documentatin can be found [here](https://www.digital-loggers.com/restapi.pdf)
+REST documentatin can be found [here](https://www.digital-loggers.com/restapi.pdf)  
+
 	•	http://<IP>/on → turn on station
 	•	http://<IP>/off → turn off station
 	•	http://<IP>/status → returns JSON:
