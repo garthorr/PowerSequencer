@@ -12,16 +12,16 @@ System Components
 1. Base Station (Front of House)
 
 	•	Hardware:
-	•	Arduino Mega
-	•	Wi-Fi module (ESP8266 or ESP32) for HTTP client communication
-	•	1x momentary push button (master toggle)
-	•	4x power status LEDs (Amp Rack, Stage 1, Stage 2, Base Station)
-	•	3x connectivity LEDs (Amp Rack, Stage 1, Stage 2)
-	•	Functions:
-	•	Press button to toggle power for all stations
-	•	Poll remote stations for power and connectivity status
-	•	Drive LED indicators based on remote station responses
-	•	Optional: host a simple web interface for remote control
+	•	Arduino Mega  
+	•	Wi-Fi module (ESP8266 or ESP32) for HTTP client communication  
+	•	1x momentary push button (master toggle)  
+	•	4x power status LEDs (Amp Rack, Stage 1, Stage 2, Base Station)  
+	•	3x connectivity LEDs (Amp Rack, Stage 1, Stage 2)  
+	•	Functions:  
+	•	Press button to toggle power for all stations  
+	•	Poll remote stations for power and connectivity status  
+	•	Drive LED indicators based on remote station responses  
+	•	Optional: host a simple web interface for remote control  
 
 ⸻
 
