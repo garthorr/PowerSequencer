@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Control Dashboard</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f3f4f6;
+        --card-bg: #ffffff;
+        --text: #1f2933;
+        --muted: #52606d;
+        --border: #d2d6dc;
+        --accent: #2563eb;
+        --on: #15803d;
+        --off: #dc2626;
+        --error: #b45309;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111827;
+          --card-bg: #1f2937;
+          --text: #f9fafb;
+          --muted: #9ca3af;
+          --border: #374151;
+          --accent: #60a5fa;
+          --on: #22c55e;
+          --off: #f87171;
+          --error: #fbbf24;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+        padding: 2rem clamp(1.25rem, 4vw, 4rem);
+      }
+
+      header {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        text-align: center;
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: clamp(1.75rem, 4vw, 2.5rem);
+        letter-spacing: 0.03em;
+      }
+
+      header p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 1.5rem;
+        width: min(1100px, 100%);
+        margin: 0 auto;
+      }
+
+      .station {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 1rem;
+        padding: 1.5rem;
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .station:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 22px 45px rgba(15, 23, 42, 0.12);
+      }
+
+      .station h2 {
+        margin: 0;
+        font-size: 1.3rem;
+        letter-spacing: 0.02em;
+      }
+
+      .status-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .indicator {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 3px solid currentColor;
+        transition: color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .indicator[data-state="off"] {
+        color: var(--off);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--off) 20%, transparent);
+      }
+
+      .indicator[data-state="on"] {
+        color: var(--on);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--on) 20%, transparent);
+      }
+
+      .indicator[data-state="error"] {
+        color: var(--error);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--error) 20%, transparent);
+      }
+
+      .status-label {
+        font-weight: 600;
+        letter-spacing: 0.03em;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+
+      button {
+        flex: 1 1 100px;
+        padding: 0.55rem 0.9rem;
+        border-radius: 0.65rem;
+        border: 1px solid transparent;
+        background: var(--accent);
+        color: #fff;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: background 0.2s ease, transform 0.15s ease;
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+      }
+
+      button[data-command="off"] {
+        background: var(--off);
+      }
+
+      button[data-command="error"] {
+        background: var(--error);
+      }
+
+      footer {
+        text-align: center;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Power Station Control Dashboard</h1>
+      <p>Monitor and manage the current state of each connected station.</p>
+    </header>
+    <main class="grid" id="dashboard"></main>
+    <footer>Tap a command to update the station indicator.</footer>
+
+    <template id="station-template">
+      <article class="station">
+        <header>
+          <h2 class="station-name"></h2>
+          <div class="status-row">
+            <span class="indicator" data-state="off" aria-hidden="true"></span>
+            <span class="status-label" data-label>OFF</span>
+          </div>
+        </header>
+        <div class="controls">
+          <button type="button" data-command="on">Turn On</button>
+          <button type="button" data-command="off">Turn Off</button>
+          <button type="button" data-command="error">Mark Error</button>
+        </div>
+      </article>
+    </template>
+
+    <script>
+      const stations = [
+        { name: "FOH Power" },
+        { name: "Stage Left Power" },
+        { name: "Stage Right Power" },
+        { name: "Amp Rack Power" }
+      ];
+
+      const stateLabels = {
+        on: "ON",
+        off: "OFF",
+        error: "ERROR"
+      };
+
+      const dashboard = document.getElementById("dashboard");
+      const template = document.getElementById("station-template");
+
+      stations.forEach(({ name }) => {
+        const node = template.content.firstElementChild.cloneNode(true);
+        const indicator = node.querySelector(".indicator");
+        const label = node.querySelector("[data-label]");
+        node.querySelector(".station-name").textContent = name;
+
+        node.querySelectorAll("button").forEach((button) => {
+          button.addEventListener("click", () => {
+            const command = button.dataset.command;
+            indicator.dataset.state = command;
+            label.textContent = stateLabels[command];
+          });
+        });
+
+        dashboard.appendChild(node);
+      });
+    </script>
+  </body>
+</html>
