@@ -58,6 +58,23 @@ void handleNotFound();
 void toggleAllStrips();
 bool getOutletStates(const PowerStrip& strip, bool* states, uint8_t count);
 bool sendOutletCommand(const PowerStrip& strip, uint8_t outlet, const String& command);
+void handleStatus();
+void handleCommandRequest(const char* command);
+void handleErrorMarker();
+void handleOptions();
+void sendJsonPayload(int code, const String& payload);
+bool applyCommandToAll(const String& command);
+
+enum class SystemState : uint8_t {
+  Off,
+  On,
+  Mixed,
+  Error
+};
+
+SystemState readSystemState();
+const char* toStateString(SystemState state);
+void updateStateIndicator(SystemState state);
 
 void setup() {
   Serial.begin(115200);
@@ -83,6 +100,14 @@ void setup() {
 
   server.on("/", handleRoot);
   server.on("/control", HTTP_POST, handleControl);
+  server.on("/status", HTTP_GET, handleStatus);
+  server.on("/status", HTTP_OPTIONS, handleOptions);
+  server.on("/on", HTTP_GET, []() { handleCommandRequest("ON"); });
+  server.on("/on", HTTP_OPTIONS, handleOptions);
+  server.on("/off", HTTP_GET, []() { handleCommandRequest("OFF"); });
+  server.on("/off", HTTP_OPTIONS, handleOptions);
+  server.on("/error", HTTP_GET, handleErrorMarker);
+  server.on("/error", HTTP_OPTIONS, handleOptions);
   server.onNotFound(handleNotFound);
 
   server.begin();
@@ -91,6 +116,14 @@ void setup() {
 
 void loop() {
   server.handleClient();
+
+  static unsigned long lastStatePoll = 0;
+  const unsigned long STATE_POLL_INTERVAL_MS = 5000;
+  unsigned long now = millis();
+  if (now - lastStatePoll >= STATE_POLL_INTERVAL_MS || lastStatePoll == 0) {
+    lastStatePoll = now;
+    updateStateIndicator(readSystemState());
+  }
 
   if (digitalRead(BUTTON_PIN) == LOW) {
     delay(50);  // debounce
@@ -106,37 +139,16 @@ void loop() {
 }
 
 void toggleAllStrips() {
-  bool allOn = true;
-  bool outletStates[OUTLETS_PER_STRIP];
-
-  for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
-    if (!getOutletStates(powerStrips[stripIndex], outletStates, OUTLETS_PER_STRIP)) {
-      Serial.print("Failed to get outlet states for strip: ");
-      Serial.println(powerStrips[stripIndex].name);
-      return;
-    }
-
-    for (uint8_t outlet = 0; outlet < OUTLETS_PER_STRIP; outlet++) {
-      if (!outletStates[outlet]) {
-        allOn = false;
-        break;
-      }
-    }
-
-    if (!allOn) {
-      break;
-    }
-  }
-
-  String command = allOn ? "OFF" : "ON";
+  SystemState currentState = readSystemState();
+  String command = (currentState == SystemState::On) ? "OFF" : "ON";
   Serial.println("Sending command to all outlets on every strip: " + command);
-  digitalWrite(STATE_LED_PIN, (command == "ON") ? HIGH : LOW);
 
-  for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
-    for (uint8_t outlet = 1; outlet <= OUTLETS_PER_STRIP; outlet++) {
-      sendOutletCommand(powerStrips[stripIndex], outlet, command);
-    }
+  bool success = applyCommandToAll(command);
+  if (!success) {
+    Serial.println("One or more outlets failed to process the toggle command");
   }
+
+  updateStateIndicator(readSystemState());
 }
 
 bool getOutletStates(const PowerStrip& strip, bool* states, uint8_t count) {
@@ -205,6 +217,151 @@ bool sendOutletCommand(const PowerStrip& strip, uint8_t outlet, const String& co
   Serial.println(")");
 
   return httpCode == 200;
+}
+
+bool applyCommandToAll(const String& command) {
+  String normalized = command;
+  normalized.toUpperCase();
+
+  bool success = true;
+  for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
+    for (uint8_t outlet = 1; outlet <= OUTLETS_PER_STRIP; outlet++) {
+      if (!sendOutletCommand(powerStrips[stripIndex], outlet, normalized)) {
+        success = false;
+      }
+    }
+  }
+
+  return success;
+}
+
+SystemState readSystemState() {
+  bool anyFailure = false;
+  bool anyOn = false;
+  bool anyOff = false;
+  bool outletStates[OUTLETS_PER_STRIP];
+
+  for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
+    bool ok = getOutletStates(powerStrips[stripIndex], outletStates, OUTLETS_PER_STRIP);
+    if (!ok) {
+      anyFailure = true;
+      continue;
+    }
+
+    for (uint8_t outlet = 0; outlet < OUTLETS_PER_STRIP; outlet++) {
+      if (outletStates[outlet]) {
+        anyOn = true;
+      } else {
+        anyOff = true;
+      }
+    }
+  }
+
+  if (anyFailure) {
+    return SystemState::Error;
+  }
+  if (anyOn && anyOff) {
+    return SystemState::Mixed;
+  }
+  if (anyOn) {
+    return SystemState::On;
+  }
+  if (anyOff) {
+    return SystemState::Off;
+  }
+
+  return SystemState::Error;
+}
+
+const char* toStateString(SystemState state) {
+  switch (state) {
+    case SystemState::On:
+      return "on";
+    case SystemState::Off:
+      return "off";
+    case SystemState::Mixed:
+    case SystemState::Error:
+    default:
+      return "error";
+  }
+}
+
+void updateStateIndicator(SystemState state) {
+  switch (state) {
+    case SystemState::On:
+      digitalWrite(STATE_LED_PIN, HIGH);
+      break;
+    case SystemState::Off:
+      digitalWrite(STATE_LED_PIN, LOW);
+      break;
+    case SystemState::Mixed:
+    case SystemState::Error:
+    default:
+      digitalWrite(STATE_LED_PIN, LOW);
+      break;
+  }
+}
+
+void sendJsonPayload(int code, const String& payload) {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  server.send(code, "application/json", payload);
+}
+
+void handleStatus() {
+  SystemState state = readSystemState();
+
+  StaticJsonDocument<256> doc;
+  doc["power"] = toStateString(state);
+  if (state == SystemState::Mixed) {
+    doc["details"] = "Mixed outlet states detected";
+  } else if (state == SystemState::Error) {
+    doc["details"] = "Unable to retrieve outlet states from one or more strips";
+  }
+  doc["timestamp"] = millis();
+
+  String payload;
+  serializeJson(doc, payload);
+  sendJsonPayload(200, payload);
+}
+
+void handleCommandRequest(const char* command) {
+  String normalized(command);
+  normalized.toUpperCase();
+
+  bool success = applyCommandToAll(normalized);
+  SystemState state = readSystemState();
+  updateStateIndicator(state);
+
+  StaticJsonDocument<256> doc;
+  doc["command"] = normalized;
+  doc["accepted"] = success;
+  doc["power"] = toStateString(state);
+  if (!success) {
+    doc["details"] = "One or more outlets failed to apply the requested command";
+  }
+
+  String payload;
+  serializeJson(doc, payload);
+  sendJsonPayload(success ? 200 : 502, payload);
+}
+
+void handleErrorMarker() {
+  StaticJsonDocument<192> doc;
+  doc["accepted"] = false;
+  doc["message"] = "Manual error state is not supported by this firmware";
+
+  String payload;
+  serializeJson(doc, payload);
+  sendJsonPayload(501, payload);
+}
+
+void handleOptions() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  server.send(204, "text/plain", "");
 }
 
 void handleRoot() {

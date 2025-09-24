@@ -177,7 +177,10 @@
       <p>Monitor and manage the current state of each connected station.</p>
     </header>
     <main class="grid" id="dashboard"></main>
-    <footer>Tap a command to update the station indicator.</footer>
+    <footer>
+      Tap a command to send a request; indicators reflect device responses and
+      refresh every 5 seconds.
+    </footer>
 
     <template id="station-template">
       <article class="station">
@@ -198,10 +201,26 @@
 
     <script>
       const stations = [
-        { name: "FOH Power" },
-        { name: "Stage Left Power" },
-        { name: "Stage Right Power" },
-        { name: "Amp Rack Power" }
+        {
+          id: "foh-power",
+          name: "FOH Power",
+          baseUrl: "http://foh-power.local"
+        },
+        {
+          id: "stage-left",
+          name: "Stage Left Power",
+          baseUrl: "http://stage-left.local"
+        },
+        {
+          id: "stage-right",
+          name: "Stage Right Power",
+          baseUrl: "http://stage-right.local"
+        },
+        {
+          id: "amp-rack",
+          name: "Amp Rack Power",
+          baseUrl: "http://amp-rack.local"
+        }
       ];
 
       const stateLabels = {
@@ -213,22 +232,452 @@
       const dashboard = document.getElementById("dashboard");
       const template = document.getElementById("station-template");
 
-      stations.forEach(({ name }) => {
+      const stationElements = new Map();
+
+      const applyState = (element, state) => {
+        const indicator = element.querySelector(".indicator");
+        const label = element.querySelector("[data-label]");
+        indicator.dataset.state = state;
+        label.textContent = stateLabels[state] ?? state.toUpperCase();
+      };
+
+      stations.forEach((station) => {
+        const { id, name } = station;
         const node = template.content.firstElementChild.cloneNode(true);
-        const indicator = node.querySelector(".indicator");
-        const label = node.querySelector("[data-label]");
         node.querySelector(".station-name").textContent = name;
+        node.dataset.stationId = id;
 
         node.querySelectorAll("button").forEach((button) => {
           button.addEventListener("click", () => {
             const command = button.dataset.command;
-            indicator.dataset.state = command;
-            label.textContent = stateLabels[command];
+            sendCommand(station, command);
           });
         });
 
         dashboard.appendChild(node);
+        stationElements.set(id, node);
       });
+
+      const sendCommand = async (station, command) => {
+        const url = `${station.baseUrl}/${command}`;
+
+        try {
+          await fetch(url, { method: "GET" });
+        } catch (error) {
+          console.error(`Failed to send ${command} to ${station.name}:`, error);
+        }
+      };
+
+      const refreshStatuses = async () => {
+        await Promise.all(
+          stations.map(async (station) => {
+            const element = stationElements.get(station.id);
+            if (!element) return;
+
+            const status = await readStatus(station);
+            applyState(element, status);
+          })
+        );
+      };
+
+      const readStatus = async (station) => {
+        const url = `${station.baseUrl}/status`;
+
+        try {
+          const response = await fetch(url, {
+            method: "GET",
+            headers: { "Cache-Control": "no-cache" }
+          });
+
+          if (!response.ok) {
+            throw new Error(`Status request failed with ${response.status}`);
+          }
+
+          const payload = await response.json();
+          const powerState = payload?.power?.toLowerCase();
+
+          if (powerState === "on") return "on";
+          if (powerState === "off") return "off";
+
+          return "error";
+        } catch (error) {
+          console.error(`Failed to read status for ${station.name}:`, error);
+          return "error";
+        }
+      };
+
+      refreshStatuses();
+      setInterval(refreshStatuses, 5000);
     </script>
   </body>
 </html>
+webPowerSwitchAllOutlets
++185
+-28
+
+@@ -36,129 +36,141 @@ struct PowerStrip {
+};
+
+PowerStrip powerStrips[] = {
+  {"FOH Power", FOH_POWER_IP},
+  {"Stg. Left Power", STAGE_LEFT_POWER_IP},
+  {"Stg. Right Power", STAGE_RIGHT_POWER_IP},
+  {"Amp Rack Power", AMP_RACK_POWER_IP}
+};
+
+const uint8_t STRIP_COUNT = sizeof(powerStrips) / sizeof(powerStrips[0]);
+const uint8_t OUTLETS_PER_STRIP = 8;
+
+// Pins
+#define BUTTON_PIN 12
+#define LED_PIN    0
+#define STATE_LED_PIN 14  // D5 = GPIO14
+
+HttpServer server(80);
+
+void handleRoot();
+void handleControl();
+void handleNotFound();
+void toggleAllStrips();
+bool getOutletStates(const PowerStrip& strip, bool* states, uint8_t count);
+bool sendOutletCommand(const PowerStrip& strip, uint8_t outlet, const String& command);
+void handleStatus();
+void handleCommandRequest(const char* command);
+void handleErrorMarker();
+void handleOptions();
+void sendJsonPayload(int code, const String& payload);
+bool applyCommandToAll(const String& command);
+
+enum class SystemState : uint8_t {
+  Off,
+  On,
+  Mixed,
+  Error
+};
+
+SystemState readSystemState();
+const char* toStateString(SystemState state);
+void updateStateIndicator(SystemState state);
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("Starting up...");
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH); // LED off
+  pinMode(STATE_LED_PIN, OUTPUT);
+  digitalWrite(STATE_LED_PIN, LOW);  // off by default
+
+#if defined(ESP8266) || defined(ESP32)
+  WiFi.mode(WIFI_STA);
+#endif
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected. IP: " + WiFi.localIP().toString());
+
+  server.on("/", handleRoot);
+  server.on("/control", HTTP_POST, handleControl);
+  server.on("/status", HTTP_GET, handleStatus);
+  server.on("/status", HTTP_OPTIONS, handleOptions);
+  server.on("/on", HTTP_GET, []() { handleCommandRequest("ON"); });
+  server.on("/on", HTTP_OPTIONS, handleOptions);
+  server.on("/off", HTTP_GET, []() { handleCommandRequest("OFF"); });
+  server.on("/off", HTTP_OPTIONS, handleOptions);
+  server.on("/error", HTTP_GET, handleErrorMarker);
+  server.on("/error", HTTP_OPTIONS, handleOptions);
+  server.onNotFound(handleNotFound);
+
+  server.begin();
+  Serial.println("Web server started");
+}
+
+void loop() {
+  server.handleClient();
+
+  static unsigned long lastStatePoll = 0;
+  const unsigned long STATE_POLL_INTERVAL_MS = 5000;
+  unsigned long now = millis();
+  if (now - lastStatePoll >= STATE_POLL_INTERVAL_MS || lastStatePoll == 0) {
+    lastStatePoll = now;
+    updateStateIndicator(readSystemState());
+  }
+
+  if (digitalRead(BUTTON_PIN) == LOW) {
+    delay(50);  // debounce
+    if (digitalRead(BUTTON_PIN) == LOW) {
+      Serial.println("Button pressed → toggling all outlets on all strips");
+      digitalWrite(LED_PIN, LOW);
+      toggleAllStrips();
+      while (digitalRead(BUTTON_PIN) == LOW) delay(10);  // wait for release
+      digitalWrite(LED_PIN, HIGH);
+      Serial.println("Button released");
+    }
+  }
+}
+
+void toggleAllStrips() {
+  bool allOn = true;
+  bool outletStates[OUTLETS_PER_STRIP];
+
+  for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
+    if (!getOutletStates(powerStrips[stripIndex], outletStates, OUTLETS_PER_STRIP)) {
+      Serial.print("Failed to get outlet states for strip: ");
+      Serial.println(powerStrips[stripIndex].name);
+      return;
+    }
+
+    for (uint8_t outlet = 0; outlet < OUTLETS_PER_STRIP; outlet++) {
+      if (!outletStates[outlet]) {
+        allOn = false;
+        break;
+      }
+    }
+
+    if (!allOn) {
+      break;
+    }
+  }
+
+  String command = allOn ? "OFF" : "ON";
+  SystemState currentState = readSystemState();
+  String command = (currentState == SystemState::On) ? "OFF" : "ON";
+  Serial.println("Sending command to all outlets on every strip: " + command);
+  digitalWrite(STATE_LED_PIN, (command == "ON") ? HIGH : LOW);
+
+  for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
+    for (uint8_t outlet = 1; outlet <= OUTLETS_PER_STRIP; outlet++) {
+      sendOutletCommand(powerStrips[stripIndex], outlet, command);
+    }
+  bool success = applyCommandToAll(command);
+  if (!success) {
+    Serial.println("One or more outlets failed to process the toggle command");
+  }
+
+  updateStateIndicator(readSystemState());
+}
+
+bool getOutletStates(const PowerStrip& strip, bool* states, uint8_t count) {
+  WiFiClient client;
+  HTTPClient http;
+
+  client.setTimeout(5000);
+  String url = String("http://") + strip.ip + "/restapi/relay/outlets/";
+  http.begin(client, url);
+  http.setAuthorization(powerSwitchUser, powerSwitchPass);
+
+  int httpCode = http.GET();
+  String payload = http.getString();
+  http.end();
+
+  Serial.print("[Status] ");
+  Serial.print(strip.name);
+  Serial.print(" (HTTP ");
+  Serial.print(httpCode);
+  Serial.println(")");
+  Serial.println(payload);
+
+  if (httpCode != 200) {
+    return false;
+  }
+@@ -185,50 +197,195 @@ bool getOutletStates(const PowerStrip& strip, bool* states, uint8_t count) {
+bool sendOutletCommand(const PowerStrip& strip, uint8_t outlet, const String& command) {
+  WiFiClient client;
+  HTTPClient http;
+
+  client.setTimeout(5000);
+  String url = String("http://") + strip.ip + "/outlet?" + String(outlet) + "=" + command;
+  http.begin(client, url);
+  http.setAuthorization(powerSwitchUser, powerSwitchPass);
+
+  int httpCode = http.GET();
+  http.end();
+
+  Serial.print("[Command] ");
+  Serial.print(strip.name);
+  Serial.print(" - Outlet ");
+  Serial.print(outlet);
+  Serial.print(" → ");
+  Serial.print(command);
+  Serial.print(" (HTTP ");
+  Serial.print(httpCode);
+  Serial.println(")");
+
+  return httpCode == 200;
+}
+
+bool applyCommandToAll(const String& command) {
+  String normalized = command;
+  normalized.toUpperCase();
+
+  bool success = true;
+  for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
+    for (uint8_t outlet = 1; outlet <= OUTLETS_PER_STRIP; outlet++) {
+      if (!sendOutletCommand(powerStrips[stripIndex], outlet, normalized)) {
+        success = false;
+      }
+    }
+  }
+
+  return success;
+}
+
+SystemState readSystemState() {
+  bool anyFailure = false;
+  bool anyOn = false;
+  bool anyOff = false;
+  bool outletStates[OUTLETS_PER_STRIP];
+
+  for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
+    bool ok = getOutletStates(powerStrips[stripIndex], outletStates, OUTLETS_PER_STRIP);
+    if (!ok) {
+      anyFailure = true;
+      continue;
+    }
+
+    for (uint8_t outlet = 0; outlet < OUTLETS_PER_STRIP; outlet++) {
+      if (outletStates[outlet]) {
+        anyOn = true;
+      } else {
+        anyOff = true;
+      }
+    }
+  }
+
+  if (anyFailure) {
+    return SystemState::Error;
+  }
+  if (anyOn && anyOff) {
+    return SystemState::Mixed;
+  }
+  if (anyOn) {
+    return SystemState::On;
+  }
+  if (anyOff) {
+    return SystemState::Off;
+  }
+
+  return SystemState::Error;
+}
+
+const char* toStateString(SystemState state) {
+  switch (state) {
+    case SystemState::On:
+      return "on";
+    case SystemState::Off:
+      return "off";
+    case SystemState::Mixed:
+    case SystemState::Error:
+    default:
+      return "error";
+  }
+}
+
+void updateStateIndicator(SystemState state) {
+  switch (state) {
+    case SystemState::On:
+      digitalWrite(STATE_LED_PIN, HIGH);
+      break;
+    case SystemState::Off:
+      digitalWrite(STATE_LED_PIN, LOW);
+      break;
+    case SystemState::Mixed:
+    case SystemState::Error:
+    default:
+      digitalWrite(STATE_LED_PIN, LOW);
+      break;
+  }
+}
+
+void sendJsonPayload(int code, const String& payload) {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  server.send(code, "application/json", payload);
+}
+
+void handleStatus() {
+  SystemState state = readSystemState();
+
+  StaticJsonDocument<256> doc;
+  doc["power"] = toStateString(state);
+  if (state == SystemState::Mixed) {
+    doc["details"] = "Mixed outlet states detected";
+  } else if (state == SystemState::Error) {
+    doc["details"] = "Unable to retrieve outlet states from one or more strips";
+  }
+  doc["timestamp"] = millis();
+
+  String payload;
+  serializeJson(doc, payload);
+  sendJsonPayload(200, payload);
+}
+
+void handleCommandRequest(const char* command) {
+  String normalized(command);
+  normalized.toUpperCase();
+
+  bool success = applyCommandToAll(normalized);
+  SystemState state = readSystemState();
+  updateStateIndicator(state);
+
+  StaticJsonDocument<256> doc;
+  doc["command"] = normalized;
+  doc["accepted"] = success;
+  doc["power"] = toStateString(state);
+  if (!success) {
+    doc["details"] = "One or more outlets failed to apply the requested command";
+  }
+
+  String payload;
+  serializeJson(doc, payload);
+  sendJsonPayload(success ? 200 : 502, payload);
+}
+
+void handleErrorMarker() {
+  StaticJsonDocument<192> doc;
+  doc["accepted"] = false;
+  doc["message"] = "Manual error state is not supported by this firmware";
+
+  String payload;
+  serializeJson(doc, payload);
+  sendJsonPayload(501, payload);
+}
+
+void handleOptions() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  server.send(204, "text/plain", "");
+}
+
+void handleRoot() {
+  String html =
+      "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+      "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
+      "<title>Power Sequencer</title>"
+      "<style>body{font-family:Arial,sans-serif;margin:0;padding:1rem;background:#f2f2f2;}"
+      "h1{text-align:center;}section{background:#fff;border-radius:8px;padding:1rem;margin:1rem auto;max-width:600px;box-shadow:0 2px 8px rgba(0,0,0,0.1);}"
+      ".outlet{display:flex;justify-content:space-between;align-items:center;padding:.5rem 0;border-bottom:1px solid #ddd;}"
+      ".outlet:last-child{border-bottom:none;}"
+      ".status.on{color:#1b5e20;font-weight:bold;}"
+      ".status.off{color:#c62828;font-weight:bold;}"
+      "button{padding:.4rem .8rem;border:none;border-radius:4px;background:#1976d2;color:#fff;font-size:1rem;cursor:pointer;}"
+      "button.off{background:#c62828;}form{margin:0;}"
+      "</style></head><body><h1>Power Sequencer</h1>";
+
+  bool states[OUTLETS_PER_STRIP];
+
+  for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
+    html += "<section><h2>" + String(powerStrips[stripIndex].name) + "</h2>";
+
+    bool ok = getOutletStates(powerStrips[stripIndex], states, OUTLETS_PER_STRIP);
+    if (!ok) {
+      html += "<p><strong>Unable to retrieve outlet status.</strong></p></section>";
+      continue;
+    }
