@@ -1,5 +1,16 @@
-#include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
+#if defined(ESP8266)
+#  include <ESP8266WiFi.h>
+#  include <ESP8266HTTPClient.h>
+#  include <ESP8266WebServer.h>
+   using HttpServer = ESP8266WebServer;
+#elif defined(ESP32)
+#  include <WiFi.h>
+#  include <HTTPClient.h>
+#  include <WebServer.h>
+   using HttpServer = WebServer;
+#else
+#  error "This sketch currently targets Wi-Fi capable boards such as the ESP8266 or ESP32."
+#endif
 #include <ArduinoJson.h>
 
 // Wi-Fi credentials
@@ -7,14 +18,46 @@ const char* ssid     = "Sweetpea";
 const char* password = "6c3x%Bve2kU@";
 
 // Power Switch config
-const char* powerSwitchIP   = "192.168.50.90";
 const char* powerSwitchUser = "admin";
 const char* powerSwitchPass = "1234";
+
+// Editable IP configuration for each power strip
+const char* FOH_POWER_IP = "192.168.8.10";
+const char* STAGE_LEFT_POWER_IP = "192.168.8.11";
+const char* STAGE_RIGHT_POWER_IP = "192.168.8.12";
+const char* AMP_RACK_POWER_IP = "192.168.8.13";
+
+// Each entry represents a DLI Web Power Switch Pro unit that already exposes an
+// HTTP interface. The base station (this sketch) is the only microcontroller
+// involved – it simply talks to the existing web UI that lives on the strip.
+struct PowerStrip {
+  const char* name;
+  const char* ip;
+};
+
+PowerStrip powerStrips[] = {
+  {"FOH Power", FOH_POWER_IP},
+  {"Stg. Left Power", STAGE_LEFT_POWER_IP},
+  {"Stg. Right Power", STAGE_RIGHT_POWER_IP},
+  {"Amp Rack Power", AMP_RACK_POWER_IP}
+};
+
+const uint8_t STRIP_COUNT = sizeof(powerStrips) / sizeof(powerStrips[0]);
+const uint8_t OUTLETS_PER_STRIP = 8;
 
 // Pins
 #define BUTTON_PIN 12
 #define LED_PIN    0
 #define STATE_LED_PIN 14  // D5 = GPIO14
+
+HttpServer server(80);
+
+void handleRoot();
+void handleControl();
+void handleNotFound();
+void toggleAllStrips();
+bool getOutletStates(const PowerStrip& strip, bool* states, uint8_t count);
+bool sendOutletCommand(const PowerStrip& strip, uint8_t outlet, const String& command);
 
 void setup() {
   Serial.begin(115200);
@@ -27,6 +70,9 @@ void setup() {
   pinMode(STATE_LED_PIN, OUTPUT);
   digitalWrite(STATE_LED_PIN, LOW);  // off by default
 
+#if defined(ESP8266) || defined(ESP32)
+  WiFi.mode(WIFI_STA);
+#endif
   WiFi.begin(ssid, password);
   Serial.print("Connecting to Wi-Fi");
   while (WiFi.status() != WL_CONNECTED) {
@@ -34,15 +80,24 @@ void setup() {
     Serial.print(".");
   }
   Serial.println("\nConnected. IP: " + WiFi.localIP().toString());
+
+  server.on("/", handleRoot);
+  server.on("/control", HTTP_POST, handleControl);
+  server.onNotFound(handleNotFound);
+
+  server.begin();
+  Serial.println("Web server started");
 }
 
 void loop() {
+  server.handleClient();
+
   if (digitalRead(BUTTON_PIN) == LOW) {
     delay(50);  // debounce
     if (digitalRead(BUTTON_PIN) == LOW) {
-      Serial.println("Button pressed → toggling all outlets");
+      Serial.println("Button pressed → toggling all outlets on all strips");
       digitalWrite(LED_PIN, LOW);
-      toggleAllOutlets();
+      toggleAllStrips();
       while (digitalRead(BUTTON_PIN) == LOW) delay(10);  // wait for release
       digitalWrite(LED_PIN, HIGH);
       Serial.println("Button released");
@@ -50,35 +105,46 @@ void loop() {
   }
 }
 
-void toggleAllOutlets() {
+void toggleAllStrips() {
   bool allOn = true;
-  bool outletStates[8];
+  bool outletStates[OUTLETS_PER_STRIP];
 
-  if (!getAllOutletStates(outletStates, 8)) {
-    Serial.println("Failed to get outlet states.");
-    return;
-  }
+  for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
+    if (!getOutletStates(powerStrips[stripIndex], outletStates, OUTLETS_PER_STRIP)) {
+      Serial.print("Failed to get outlet states for strip: ");
+      Serial.println(powerStrips[stripIndex].name);
+      return;
+    }
 
-  for (int i = 0; i < 8; i++) {
-    if (!outletStates[i]) {
-      allOn = false;
+    for (uint8_t outlet = 0; outlet < OUTLETS_PER_STRIP; outlet++) {
+      if (!outletStates[outlet]) {
+        allOn = false;
+        break;
+      }
+    }
+
+    if (!allOn) {
       break;
     }
   }
 
   String command = allOn ? "OFF" : "ON";
-  Serial.println("Sending command to all outlets: " + command);
+  Serial.println("Sending command to all outlets on every strip: " + command);
   digitalWrite(STATE_LED_PIN, (command == "ON") ? HIGH : LOW);
-  for (int i = 1; i <= 8; i++) {
-    sendOutletCommand(i, command);
+
+  for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
+    for (uint8_t outlet = 1; outlet <= OUTLETS_PER_STRIP; outlet++) {
+      sendOutletCommand(powerStrips[stripIndex], outlet, command);
+    }
   }
 }
 
-bool getAllOutletStates(bool* states, int count) {
+bool getOutletStates(const PowerStrip& strip, bool* states, uint8_t count) {
   WiFiClient client;
   HTTPClient http;
 
-  String url = String("http://") + powerSwitchIP + "/restapi/relay/outlets/";
+  client.setTimeout(5000);
+  String url = String("http://") + strip.ip + "/restapi/relay/outlets/";
   http.begin(client, url);
   http.setAuthorization(powerSwitchUser, powerSwitchPass);
 
@@ -86,36 +152,139 @@ bool getAllOutletStates(bool* states, int count) {
   String payload = http.getString();
   http.end();
 
-  Serial.println("HTTP " + String(httpCode));
-  Serial.println("Raw outlet state response: " + payload);
+  Serial.print("[Status] ");
+  Serial.print(strip.name);
+  Serial.print(" (HTTP ");
+  Serial.print(httpCode);
+  Serial.println(")");
+  Serial.println(payload);
 
-  if (httpCode != 200) return false;
+  if (httpCode != 200) {
+    return false;
+  }
 
   StaticJsonDocument<2048> doc;
   DeserializationError err = deserializeJson(doc, payload);
-  if (err) return false;
+  if (err) {
+    Serial.print("JSON parse error: ");
+    Serial.println(err.c_str());
+    return false;
+  }
 
-  for (int i = 0; i < count; i++) {
-    states[i] = doc[i]["state"];
-    Serial.print("Outlet ");
-    Serial.print(i + 1);
-    Serial.print(": ");
-    Serial.println(states[i] ? "ON" : "OFF");
+  uint8_t available = min<uint8_t>(count, doc.size());
+  for (uint8_t i = 0; i < available; i++) {
+    states[i] = doc[i]["state"].as<bool>();
+  }
+  for (uint8_t i = available; i < count; i++) {
+    states[i] = false;
   }
 
   return true;
 }
 
-void sendOutletCommand(int outlet, String command) {
+bool sendOutletCommand(const PowerStrip& strip, uint8_t outlet, const String& command) {
   WiFiClient client;
   HTTPClient http;
 
-  String url = String("http://") + powerSwitchIP + "/outlet?" + String(outlet) + "=" + command;
+  client.setTimeout(5000);
+  String url = String("http://") + strip.ip + "/outlet?" + String(outlet) + "=" + command;
   http.begin(client, url);
   http.setAuthorization(powerSwitchUser, powerSwitchPass);
 
   int httpCode = http.GET();
   http.end();
 
-  Serial.println("Outlet " + String(outlet) + " → " + command + " (HTTP " + httpCode + ")");
+  Serial.print("[Command] ");
+  Serial.print(strip.name);
+  Serial.print(" - Outlet ");
+  Serial.print(outlet);
+  Serial.print(" → ");
+  Serial.print(command);
+  Serial.print(" (HTTP ");
+  Serial.print(httpCode);
+  Serial.println(")");
+
+  return httpCode == 200;
+}
+
+void handleRoot() {
+  String html =
+      "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+      "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
+      "<title>Power Sequencer</title>"
+      "<style>body{font-family:Arial,sans-serif;margin:0;padding:1rem;background:#f2f2f2;}"
+      "h1{text-align:center;}section{background:#fff;border-radius:8px;padding:1rem;margin:1rem auto;max-width:600px;box-shadow:0 2px 8px rgba(0,0,0,0.1);}"
+      ".outlet{display:flex;justify-content:space-between;align-items:center;padding:.5rem 0;border-bottom:1px solid #ddd;}"
+      ".outlet:last-child{border-bottom:none;}"
+      ".status.on{color:#1b5e20;font-weight:bold;}"
+      ".status.off{color:#c62828;font-weight:bold;}"
+      "button{padding:.4rem .8rem;border:none;border-radius:4px;background:#1976d2;color:#fff;font-size:1rem;cursor:pointer;}"
+      "button.off{background:#c62828;}form{margin:0;}"
+      "</style></head><body><h1>Power Sequencer</h1>";
+
+  bool states[OUTLETS_PER_STRIP];
+
+  for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
+    html += "<section><h2>" + String(powerStrips[stripIndex].name) + "</h2>";
+
+    bool ok = getOutletStates(powerStrips[stripIndex], states, OUTLETS_PER_STRIP);
+    if (!ok) {
+      html += "<p><strong>Unable to retrieve outlet status.</strong></p></section>";
+      continue;
+    }
+
+    for (uint8_t outlet = 0; outlet < OUTLETS_PER_STRIP; outlet++) {
+      bool isOn = states[outlet];
+      String statusClass = isOn ? "status on" : "status off";
+      String statusText = isOn ? "ON" : "OFF";
+      String buttonClass = isOn ? "off" : "";
+      String buttonText = isOn ? "Turn Off" : "Turn On";
+      String desiredCommand = isOn ? "OFF" : "ON";
+
+      html += "<div class='outlet'><span class='" + statusClass + "'>Outlet " +
+              String(outlet + 1) + ": " + statusText + "</span>";
+      html += "<form method='POST' action='/control'>";
+      html += "<input type='hidden' name='strip' value='" + String(stripIndex) + "'>";
+      html += "<input type='hidden' name='outlet' value='" + String(outlet + 1) + "'>";
+      html += "<input type='hidden' name='command' value='" + desiredCommand + "'>";
+      html += "<button type='submit' class='" + buttonClass + "'>" + buttonText + "</button></form></div>";
+    }
+
+    html += "</section>";
+  }
+
+  html += "</body></html>";
+
+  server.send(200, "text/html", html);
+}
+
+void handleControl() {
+  if (!server.hasArg("strip") || !server.hasArg("outlet") || !server.hasArg("command")) {
+    server.send(400, "text/plain", "Missing parameters");
+    return;
+  }
+
+  uint8_t stripIndex = server.arg("strip").toInt();
+  uint8_t outlet = server.arg("outlet").toInt();
+  String command = server.arg("command");
+  command.toUpperCase();
+
+  if (stripIndex >= STRIP_COUNT || outlet == 0 || outlet > OUTLETS_PER_STRIP ||
+      (command != "ON" && command != "OFF")) {
+    server.send(400, "text/plain", "Invalid parameters");
+    return;
+  }
+
+  bool success = sendOutletCommand(powerStrips[stripIndex], outlet, command);
+  if (!success) {
+    server.send(502, "text/plain", "Failed to control outlet");
+    return;
+  }
+
+  server.sendHeader("Location", "/");
+  server.send(303, "text/plain", "Redirecting");
+}
+
+void handleNotFound() {
+  server.send(404, "text/plain", "Not found");
 }
