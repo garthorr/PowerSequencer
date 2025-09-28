@@ -68,10 +68,16 @@
 
       .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        grid-template-columns: minmax(0, 1fr);
         gap: 1.5rem;
         width: min(1100px, 100%);
         margin: 0 auto;
+      }
+
+      @media (min-width: 700px) {
+        .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
       }
 
       .station {
@@ -164,6 +170,86 @@
         background: var(--error);
       }
 
+      .status-details {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+
+      .telemetry {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+
+      .telemetry-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.35rem 0.5rem;
+        border-radius: 0.5rem;
+        background: color-mix(in srgb, var(--accent) 7%, transparent);
+      }
+
+      .telemetry-label {
+        font-weight: 600;
+        letter-spacing: 0.03em;
+      }
+
+      .telemetry-value {
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+        color: var(--accent);
+      }
+
+      .telemetry-value.unavailable {
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .telemetry-empty {
+        margin: 0;
+        font-size: 0.85rem;
+        color: var(--muted);
+        font-style: italic;
+      }
+
+      .strip-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
+      .strip-list li {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding-bottom: 0.35rem;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .strip-list li:last-child {
+        border-bottom: none;
+      }
+
+      .strip-label {
+        font-weight: 500;
+      }
+
+      .strip-value {
+        font-weight: 600;
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .strip-value.unavailable {
+        color: var(--muted);
+        font-weight: 500;
+      }
+
       footer {
         text-align: center;
         color: var(--muted);
@@ -195,6 +281,17 @@
           <button type="button" data-command="on">Turn On</button>
           <button type="button" data-command="off">Turn Off</button>
           <button type="button" data-command="error">Mark Error</button>
+        </div>
+        <p class="status-details" data-details hidden></p>
+        <div class="telemetry">
+          <div class="telemetry-row" data-total-current hidden>
+            <span class="telemetry-label">Total Current</span>
+            <span class="telemetry-value" data-total-current-value>--</span>
+          </div>
+          <ul class="strip-list" data-strip-list></ul>
+          <p class="telemetry-empty" data-telemetry-empty hidden>
+            No current telemetry available for this station.
+          </p>
         </div>
       </article>
     </template>
@@ -234,11 +331,95 @@
 
       const stationElements = new Map();
 
-      const applyState = (element, state) => {
+      const formatAmps = (value) => `${value.toFixed(2)} A`;
+
+      const applyState = (element, state, details = "") => {
         const indicator = element.querySelector(".indicator");
         const label = element.querySelector("[data-label]");
-        indicator.dataset.state = state;
-        label.textContent = stateLabels[state] ?? state.toUpperCase();
+        const normalized = state === "on" || state === "off" ? state : "error";
+        indicator.dataset.state = normalized;
+        label.textContent = stateLabels[normalized] ?? normalized.toUpperCase();
+
+        const detailsNode = element.querySelector("[data-details]");
+        if (!detailsNode) return;
+
+        if (details && details.trim().length > 0) {
+          detailsNode.textContent = details;
+          detailsNode.hidden = false;
+        } else {
+          detailsNode.hidden = true;
+          detailsNode.textContent = "";
+        }
+      };
+
+      const applyTelemetry = (element, telemetry) => {
+        const totalRow = element.querySelector("[data-total-current]");
+        const totalValue = element.querySelector("[data-total-current-value]");
+        const stripList = element.querySelector("[data-strip-list]");
+        const emptyMessage = element.querySelector("[data-telemetry-empty]");
+
+        if (stripList) {
+          stripList.innerHTML = "";
+          stripList.hidden = true;
+        }
+
+        if (emptyMessage) {
+          emptyMessage.hidden = true;
+        }
+
+        const hasTelemetry =
+          telemetry &&
+          (Number.isFinite(telemetry.total) ||
+            (Array.isArray(telemetry.strips) && telemetry.strips.length > 0));
+
+        if (!hasTelemetry) {
+          if (totalRow) {
+            totalRow.hidden = true;
+          }
+          if (emptyMessage) {
+            emptyMessage.hidden = false;
+          }
+          return;
+        }
+
+        if (Number.isFinite(telemetry.total) && totalRow && totalValue) {
+          totalValue.textContent = formatAmps(telemetry.total);
+          totalValue.classList.remove("unavailable");
+          totalRow.hidden = false;
+        } else if (totalRow && totalValue) {
+          totalValue.textContent = "N/A";
+          totalValue.classList.add("unavailable");
+          totalRow.hidden = false;
+        }
+
+        if (Array.isArray(telemetry.strips) && stripList) {
+          stripList.hidden = telemetry.strips.length === 0;
+          telemetry.strips.forEach((strip) => {
+            const item = document.createElement("li");
+            const label = document.createElement("span");
+            const value = document.createElement("span");
+
+            label.className = "strip-label";
+            value.className = "strip-value";
+
+            label.textContent = strip.name;
+
+            if (strip.available && Number.isFinite(strip.amps)) {
+              value.textContent = formatAmps(strip.amps);
+              value.classList.remove("unavailable");
+            } else {
+              value.textContent = "N/A";
+              value.classList.add("unavailable");
+            }
+
+            item.append(label, value);
+            stripList.appendChild(item);
+          });
+
+          if (stripList.childElementCount === 0 && emptyMessage) {
+            emptyMessage.hidden = false;
+          }
+        }
       };
 
       stations.forEach((station) => {
@@ -265,6 +446,8 @@
           await fetch(url, { method: "GET" });
         } catch (error) {
           console.error(`Failed to send ${command} to ${station.name}:`, error);
+        } finally {
+          setTimeout(refreshStatuses, 250);
         }
       };
 
@@ -275,7 +458,18 @@
             if (!element) return;
 
             const status = await readStatus(station);
-            applyState(element, status);
+            if (!status) {
+              applyState(
+                element,
+                "error",
+                "Unable to retrieve status from this device."
+              );
+              applyTelemetry(element, null);
+              return;
+            }
+
+            applyState(element, status.state, status.details);
+            applyTelemetry(element, status.telemetry);
           })
         );
       };
@@ -294,15 +488,35 @@
           }
 
           const payload = await response.json();
-          const powerState = payload?.power?.toLowerCase();
+          const state = String(payload?.power ?? "error").toLowerCase();
+          const details =
+            typeof payload?.details === "string" ? payload.details : "";
 
-          if (powerState === "on") return "on";
-          if (powerState === "off") return "off";
+          const totalCurrentValue = Number(payload?.total_current);
+          const strips = Array.isArray(payload?.strips)
+            ? payload.strips.map((strip, index) => {
+                const rawName =
+                  typeof strip?.name === "string" ? strip.name.trim() : "";
+                const name = rawName.length > 0 ? rawName : `Strip ${index + 1}`;
+                const ampsValue = Number(strip?.current);
+                const amps = Number.isFinite(ampsValue) ? ampsValue : null;
+                const available =
+                  strip?.current_available === true || Number.isFinite(amps);
+                return { name, amps, available };
+              })
+            : [];
 
-          return "error";
+          return {
+            state: state === "on" || state === "off" ? state : "error",
+            details,
+            telemetry: {
+              total: Number.isFinite(totalCurrentValue) ? totalCurrentValue : null,
+              strips
+            }
+          };
         } catch (error) {
           console.error(`Failed to read status for ${station.name}:`, error);
-          return "error";
+          return null;
         }
       };
 

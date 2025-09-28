@@ -1,104 +1,53 @@
 # PowerSequencer
-Building an IP-controlled power sequencer.
 
-Overview
+PowerSequencer coordinates a group of Digital Loggers Web Power Switch units so that a single
+operator can monitor load telemetry and toggle power to multiple AV racks from one place.
+The project currently contains two pieces:
 
-This system enables centralized and remote control of four AV equipment zones using Web Power Switch Pro units. Each station is controlled via a WT32-ETH01 ESP32 module using wired Ethernet as the primary connection, with Wi-Fi as a backup. A base station with an Arduino Mega acts as the system controller, providing physical controls and status indicators.
+* **control-dashboard.html** – a standalone HTML dashboard that runs in any modern browser
+  and issues REST commands to each rack controller.
+* **webPowerSwitchAllOutlets** – firmware for an ESP8266/ESP32 bridge that exposes `/on`,
+  `/off`, and `/status` endpoints while proxying commands to a Web Power Switch and
+  aggregating telemetry.
 
-⸻
+## Features
 
-System Components
+* 2×2 responsive dashboard layout that surfaces each rack's state, status details, and
+  per-strip current draw when the Digital Loggers API provides the information.
+* Automatic refresh every five seconds so the UI reflects the latest state after manual or
+  scripted changes.
+* Embedded firmware support for caching strip current measurements, exposing total load, and
+  reporting command success to callers of `/status`.
 
-1. Base Station (Front of House)
+## Getting Started
 
-	•	Hardware:
-	•	Arduino Mega  
-	•	Wi-Fi module (ESP8266 or ESP32) for HTTP client communication  
-	•	1x momentary push button (master toggle)  
-	•	4x power status LEDs (Amp Rack, Stage 1, Stage 2, Base Station)  
-	•	3x connectivity LEDs (Amp Rack, Stage 1, Stage 2)  
-	•	Functions:  
-	•	Press button to toggle power for all stations  
-	•	Poll remote stations for power and connectivity status  
-	•	Drive LED indicators based on remote station responses  
-	•	Optional: host a simple web interface for remote control  
+### Control dashboard
 
-⸻
+1. Host `control-dashboard.html` on any static web server or open it directly in a browser.
+2. Edit the `stations` array near the bottom of the file so each entry points at the base URL
+   of the ESP controller that fronts a Web Power Switch.
+3. The dashboard will poll each controller's `/status` endpoint every five seconds and render
+   the response, including amperage readings if the backend makes them available.
 
-2. Remote Stations (x4)
+### ESP bridge firmware
 
-	•	Locations: Amp Rack, Stage Rack 1, Stage Rack 2, Base Rack  
-	•	Hardware:  
-	•	WT32-ETH01 ESP32 module  
-	•	Web Power Switch Pro (controlled via HTTP API)  
-	•	Manual override push button  
-	•	Local relay (optional for control fallback)  
-	•	Functions:  
-	•	Serve HTTP endpoints:  
-	•	GET /on – powers ON the rack  
-	•	GET /off – powers OFF the rack  
-	•	GET /toggle – toggles current state  
-	•	GET /status – returns current power state and connection mode  
-	•	Poll local Web Power Switch Pro to confirm status  
-	•	Respond to commands from base station  
-	•	Automatically prefer Ethernet; fallback to Wi-Fi if Ethernet unavailable  
-	•	Manual override button powers ON/OFF locally regardless of network state  
+1. Open `webPowerSwitchAllOutlets` in the Arduino IDE or PlatformIO.
+2. Update the Wi-Fi credentials and IP addresses at the top of the file to match your
+   environment.
+3. Flash the firmware to a supported ESP8266/ESP32 board. The sketch hosts HTTP endpoints for
+   `/on`, `/off`, `/error`, and `/status` and forwards commands to the configured Web Power
+   Switch devices using the Digital Loggers REST API.
 
-⸻
+Refer to the official Digital Loggers API reference for endpoint details and parameters:
+https://www.digital-loggers.com/downloads/Product%20Manuals/Power%20Control/rest_api_reference.pdf
 
-Communication Flow
+## Development notes
 
-Base Station → WT32 API Calls
-REST documentatin can be found [here](https://www.digital-loggers.com/restapi.pdf)  
+* The UI assumes the `/status` response returns JSON including `power`, `details`,
+  `total_current`, and a `strips` array with `name`, `current`, and `current_available`
+  properties for each Web Power Switch strip.
+* Current telemetry is optional; when it is absent the dashboard gracefully displays an
+  informative placeholder message.
+* The firmware code relies on the ArduinoJson library and the ESP HTTP client stack that ships
+  with the ESP8266/ESP32 Arduino cores.
 
-	•	http://<IP>/on → turn on station
-	•	http://<IP>/off → turn off station
-	•	http://<IP>/status → returns JSON:
-
-{
-  "power": "on",
-  "connection": "ethernet", 
-  "reachable": true
-}
-
-Failover Logic
-	•	Try primary (Ethernet) IP  
-	•	If unreachable after 3 attempts, try fallback Wi-Fi IP  
-	•	Mark as offline if both fail  
-
-⸻
-
-Web Control Panel (Optional)
-	•	Served from Arduino Mega or a separate server  
-	•	Displays:  
-	•	Toggle buttons per station  
-	•	Status indicators (power and connectivity)  
-	•	Sends same HTTP commands as hardware  
-
-⸻
-
-Status LED Logic (on Base Station)  
-	•	Power LEDs (4):  
-	•	ON: confirmed “on” from /status  
-	•	OFF: confirmed “off”  
-	•	Blinking/Red: no response  
-	•	Connectivity LEDs (3):  
-	•	Green: /status responded successfully  
-	•	Red: no connection via either IP  
-
-⸻
-
-Developer Tasks
-
-For Each WT32-ETH01 Station  
-	•	Implement Ethernet-first networking with Wi-Fi fallback  
-	•	Serve RESTful API for /on, /off, /toggle, /status  
-	•	Integrate Web Power Switch control (HTTP GET/POST)  
-	•	Poll switch status every 5–10 sec  
-	•	Monitor manual override button via GPIO  
-
-For Arduino Mega Base Station  
-	•	Periodically ping each WT32 station  
-	•	Send HTTP commands on button press  
-	•	Drive LED indicators based on power and connectivity  
-	•	Optional: implement simple web control interface  
