@@ -12,6 +12,7 @@
 #  error "This sketch currently targets Wi-Fi capable boards such as the ESP8266 or ESP32."
 #endif
 #include <ArduinoJson.h>
+#include <ctype.h>
 
 // Wi-Fi credentials
 const char* ssid     = "Sweetpea";
@@ -57,6 +58,7 @@ void handleControl();
 void handleNotFound();
 void toggleAllStrips();
 bool getOutletStates(const PowerStrip& strip, bool* states, uint8_t count);
+bool getStripCurrent(const PowerStrip& strip, float& amps);
 bool sendOutletCommand(const PowerStrip& strip, uint8_t outlet, const String& command);
 void handleStatus();
 void handleCommandRequest(const char* command);
@@ -64,6 +66,9 @@ void handleErrorMarker();
 void handleOptions();
 void sendJsonPayload(int code, const String& payload);
 bool applyCommandToAll(const String& command);
+bool parseCurrentMeasurement(const String& payload, float& amps);
+bool extractCurrentFromJson(JsonVariantConst variant, float& amps);
+bool parseNumericString(const String& payload, float& value);
 
 enum class SystemState : uint8_t {
   Off,
@@ -194,6 +199,55 @@ bool getOutletStates(const PowerStrip& strip, bool* states, uint8_t count) {
   return true;
 }
 
+bool getStripCurrent(const PowerStrip& strip, float& amps) {
+  static const char* const ENDPOINTS[] = {
+      "/restapi/relay/amps/",
+      "/restapi/relay/current/",
+      "/restapi/relay/status/",
+      "/restapi/amps",
+      "/current",
+      "/amps"};
+
+  for (uint8_t i = 0; i < sizeof(ENDPOINTS) / sizeof(ENDPOINTS[0]); i++) {
+    WiFiClient client;
+    HTTPClient http;
+
+    client.setTimeout(5000);
+    String url = String("http://") + strip.ip + ENDPOINTS[i];
+    http.begin(client, url);
+    http.setAuthorization(powerSwitchUser, powerSwitchPass);
+
+    int httpCode = http.GET();
+    String payload = http.getString();
+    http.end();
+
+    Serial.print("[Current] ");
+    Serial.print(strip.name);
+    Serial.print(" @ ");
+    Serial.print(ENDPOINTS[i]);
+    Serial.print(" (HTTP ");
+    Serial.print(httpCode);
+    Serial.println(")");
+
+    if (httpCode != 200) {
+      continue;
+    }
+
+    if (parseCurrentMeasurement(payload, amps)) {
+      Serial.print("[Current] Parsed current for ");
+      Serial.print(strip.name);
+      Serial.print(": ");
+      Serial.print(amps, 3);
+      Serial.println(" A");
+      return true;
+    }
+  }
+
+  Serial.print("[Current] Unable to determine current draw for ");
+  Serial.println(strip.name);
+  return false;
+}
+
 bool sendOutletCommand(const PowerStrip& strip, uint8_t outlet, const String& command) {
   WiFiClient client;
   HTTPClient http;
@@ -309,10 +363,132 @@ void sendJsonPayload(int code, const String& payload) {
   server.send(code, "application/json", payload);
 }
 
+bool parseCurrentMeasurement(const String& payload, float& amps) {
+  StaticJsonDocument<512> doc;
+  DeserializationError err = deserializeJson(doc, payload);
+  if (!err) {
+    if (extractCurrentFromJson(doc.as<JsonVariantConst>(), amps)) {
+      return true;
+    }
+  }
+
+  return parseNumericString(payload, amps);
+}
+
+bool extractCurrentFromJson(JsonVariantConst variant, float& amps) {
+  if (variant.is<JsonObjectConst>()) {
+    JsonObjectConst obj = variant.as<JsonObjectConst>();
+
+    if (obj.containsKey("amps")) {
+      amps = obj["amps"].as<float>();
+      return true;
+    }
+    if (obj.containsKey("current")) {
+      amps = obj["current"].as<float>();
+      return true;
+    }
+    if (obj.containsKey("value")) {
+      amps = obj["value"].as<float>();
+      return true;
+    }
+
+    for (JsonPairConst kvp : obj) {
+      JsonVariantConst nested = kvp.value();
+      const char* key = kvp.key().c_str();
+      if (key != nullptr) {
+        String lowered(key);
+        lowered.toLowerCase();
+        if (lowered.indexOf("amp") != -1 || lowered.indexOf("current") != -1) {
+          if (nested.is<float>() || nested.is<int>()) {
+            amps = nested.as<float>();
+            return true;
+          }
+          if (nested.is<const char*>()) {
+            const char* text = nested.as<const char*>();
+            if (text != nullptr) {
+              float numeric = 0.0f;
+              if (parseNumericString(String(text), numeric)) {
+                amps = numeric;
+                return true;
+              }
+            }
+          }
+        }
+      }
+
+      if (nested.is<JsonObjectConst>() || nested.is<JsonArrayConst>()) {
+        if (extractCurrentFromJson(nested, amps)) {
+          return true;
+        }
+      }
+    }
+  } else if (variant.is<JsonArrayConst>()) {
+    for (JsonVariantConst nested : variant.as<JsonArrayConst>()) {
+      if (extractCurrentFromJson(nested, amps)) {
+        return true;
+      }
+    }
+  } else if (variant.is<float>() || variant.is<int>()) {
+    amps = variant.as<float>();
+    return true;
+  }
+
+  return false;
+}
+
+bool parseNumericString(const String& payload, float& value) {
+  String trimmed = payload;
+  trimmed.trim();
+  if (trimmed.length() == 0) {
+    return false;
+  }
+
+  int end = trimmed.length();
+  while (end > 0) {
+    char c = trimmed[end - 1];
+    if (isdigit(static_cast<unsigned char>(c)) || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E') {
+      break;
+    }
+    end--;
+  }
+
+  if (end > 0 && end < trimmed.length()) {
+    trimmed.remove(end);
+  }
+
+  trimmed.trim();
+  if (trimmed.length() == 0) {
+    return false;
+  }
+
+  bool hasDigit = false;
+  for (uint16_t i = 0; i < trimmed.length(); i++) {
+    if (isdigit(static_cast<unsigned char>(trimmed[i]))) {
+      hasDigit = true;
+      break;
+    }
+  }
+
+  if (!hasDigit) {
+    return false;
+  }
+
+  value = trimmed.toFloat();
+  if (value == 0.0f) {
+    if (trimmed == "0" || trimmed == "0.0" || trimmed == "0.00" || trimmed == "0.000" ||
+        trimmed.startsWith("0.") || trimmed.startsWith("-0.") || trimmed.startsWith("+0.")) {
+      return true;
+    }
+    return false;
+  }
+
+  return true;
+}
+
 void handleStatus() {
   SystemState state = readSystemState();
 
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<768> doc;
   doc["power"] = toStateString(state);
   if (state == SystemState::Mixed) {
     doc["details"] = "Mixed outlet states detected";
@@ -320,6 +496,27 @@ void handleStatus() {
     doc["details"] = "Unable to retrieve outlet states from one or more strips";
   }
   doc["timestamp"] = millis();
+
+  JsonArray strips = doc.createNestedArray("strips");
+  float totalCurrent = 0.0f;
+  bool anyCurrent = false;
+  for (uint8_t i = 0; i < STRIP_COUNT; i++) {
+    JsonObject strip = strips.createNestedObject();
+    strip["name"] = powerStrips[i].name;
+
+    float amps = 0.0f;
+    bool hasCurrent = getStripCurrent(powerStrips[i], amps);
+    strip["current_available"] = hasCurrent;
+    if (hasCurrent) {
+      strip["current"] = amps;
+      totalCurrent += amps;
+      anyCurrent = true;
+    }
+  }
+
+  if (anyCurrent) {
+    doc["total_current"] = totalCurrent;
+  }
 
   String payload;
   serializeJson(doc, payload);
@@ -365,6 +562,22 @@ void handleOptions() {
 }
 
 void handleRoot() {
+  float stripCurrents[STRIP_COUNT];
+  bool stripCurrentAvailable[STRIP_COUNT];
+  float totalCurrent = 0.0f;
+  bool anyCurrent = false;
+
+  for (uint8_t i = 0; i < STRIP_COUNT; i++) {
+    float amps = 0.0f;
+    bool hasCurrent = getStripCurrent(powerStrips[i], amps);
+    stripCurrents[i] = amps;
+    stripCurrentAvailable[i] = hasCurrent;
+    if (hasCurrent) {
+      totalCurrent += amps;
+      anyCurrent = true;
+    }
+  }
+
   String html =
       "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
       "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
@@ -375,14 +588,54 @@ void handleRoot() {
       ".outlet:last-child{border-bottom:none;}"
       ".status.on{color:#1b5e20;font-weight:bold;}"
       ".status.off{color:#c62828;font-weight:bold;}"
+      ".current{margin:.5rem 0;font-size:.95rem;color:#424242;}"
+      ".current .value{font-weight:bold;color:#1976d2;}"
+      ".current.unavailable .value{color:#c62828;}"
+      ".summary{background:#fff;border-radius:8px;padding:1rem;margin:1rem auto;max-width:600px;box-shadow:0 2px 8px rgba(0,0,0,0.1);}"
+      ".summary.unavailable .value{color:#c62828;}"
+      ".summary .help{margin-top:.5rem;color:#757575;font-size:.9rem;}"
       "button{padding:.4rem .8rem;border:none;border-radius:4px;background:#1976d2;color:#fff;font-size:1rem;cursor:pointer;}"
       "button.off{background:#c62828;}form{margin:0;}"
       "</style></head><body><h1>Power Sequencer</h1>";
+
+  html += "<section class='summary";
+  if (!anyCurrent) {
+    html += " unavailable";
+  }
+  html += "'><h2>Aggregate Load</h2><p class='current";
+  if (!anyCurrent) {
+    html += " unavailable";
+  }
+  html += "'>Total current draw: <span class='value'>";
+  if (anyCurrent) {
+    html += String(totalCurrent, 2) + " A";
+  } else {
+    html += "N/A";
+  }
+  html += "</span></p>";
+  if (!anyCurrent) {
+    html += "<p class='help'>No current readings are available from the connected power strips.</p>";
+  }
+  html += "</section>";
 
   bool states[OUTLETS_PER_STRIP];
 
   for (uint8_t stripIndex = 0; stripIndex < STRIP_COUNT; stripIndex++) {
     html += "<section><h2>" + String(powerStrips[stripIndex].name) + "</h2>";
+
+    bool hasCurrent = stripCurrentAvailable[stripIndex];
+    float amps = stripCurrents[stripIndex];
+    html += "<p class='current";
+    if (!hasCurrent) {
+      html += " unavailable";
+    }
+    html += "'>Current draw: <span class='value'>";
+    if (hasCurrent) {
+      html += String(amps, 2) + " A";
+    } else {
+      html += "N/A";
+    }
+    html += "</span></p>";
 
     bool ok = getOutletStates(powerStrips[stripIndex], states, OUTLETS_PER_STRIP);
     if (!ok) {
@@ -414,7 +667,6 @@ void handleRoot() {
 
   server.send(200, "text/html", html);
 }
-
 void handleControl() {
   if (!server.hasArg("strip") || !server.hasArg("outlet") || !server.hasArg("command")) {
     server.send(400, "text/plain", "Missing parameters");
