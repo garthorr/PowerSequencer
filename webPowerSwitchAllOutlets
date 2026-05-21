@@ -26,8 +26,8 @@
 // ==========================================
 
 // Wi-Fi credentials
-const char* ssid     = "Sweetpea";
-const char* password = "6c3x%Bve2kU@";
+const char* ssid     = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
 
 // Digital Loggers Credentials
 const char* powerSwitchUser = "admin";
@@ -45,10 +45,10 @@ struct PowerStrip {
 
 // ADD OR REMOVE POWER STRIPS HERE
 PowerStrip powerStrips[] = {
-  {"FOH Power",        "192.168.8.10", ""},
-  {"Stg. Left Power",  "192.168.8.11", ""},
-  {"Stg. Right Power", "192.168.8.12", ""},
-  {"Amp Rack Power",   "192.168.8.13", ""}
+  {"Rack 1", "192.168.0.100", ""},
+  {"Rack 2", "192.168.0.101", ""},
+  {"Rack 3", "192.168.0.102", ""},
+  {"Rack 4", "192.168.0.103", ""}
 };
 
 // HARDWARE PINOUT
