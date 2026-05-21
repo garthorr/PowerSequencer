@@ -17,9 +17,18 @@ The system consists of an ESP8266 or ESP32 bridge that coordinates communication
 *   **Physical Override**: Supports a physical push-button to toggle the entire system without needing the web UI.
 *   **Privacy First**: No cloud dependency. All communication stays within your local network.
 
+## Hardware Selection & Stability
+
+While an Arduino Mega is a classic choice, this project **requires an ESP32 or ESP8266**.
+
+The master bridge performs heavy JSON parsing and serves a modern web dashboard. The ESP32's 520KB of RAM allows for safe, buffered communication with multiple power strips simultaneously. In contrast, the Arduino Mega (with only 8KB of RAM) would likely crash or experience memory corruption when handling the large JSON telemetry payloads from multiple Digital Loggers units.
+
+For **Industrial-Grade Stability**:
+If you require maximum reliability (avoiding Wi-Fi interference), we recommend using an ESP32 with **wired Ethernet**, such as the **WT32-ETH01**. The firmware is compatible with both Wi-Fi and Ethernet ESP32 variants.
+
 ## Hardware Requirements
 
-*   **Microcontroller**: ESP8266 (e.g., NodeMCU, Wemos D1 Mini) or ESP32.
+*   **Microcontroller**: ESP32 (Recommended) or ESP8266.
 *   **Power Strips**: Digital Loggers Web Power Switch Pro (or any DLI model supporting the REST API).
 *   **Components**:
     *   1x Push button (connected to GPIO 12 / D6).
