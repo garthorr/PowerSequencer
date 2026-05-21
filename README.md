@@ -1,53 +1,61 @@
 # PowerSequencer
 
-PowerSequencer coordinates a group of Digital Loggers Web Power Switch units so that a single
-operator can monitor load telemetry and toggle power to multiple AV racks from one place.
-The project currently contains two pieces:
+PowerSequencer is a master control bridge for Digital Loggers Web Power Switch units. It allows a single operator to manage multiple AV racks, providing synchronized power sequencing and aggregate telemetry monitoring.
 
-* **control-dashboard.html** – a standalone HTML dashboard that runs in any modern browser
-  and issues REST commands to each rack controller.
-* **webPowerSwitchAllOutlets** – firmware for an ESP8266/ESP32 bridge that exposes `/on`,
-  `/off`, and `/status` endpoints while proxying commands to a Web Power Switch and
-  aggregating telemetry.
+The system consists of an ESP8266 or ESP32 bridge that coordinates communication between the user and multiple power strips.
 
 ## Features
 
-* 2×2 responsive dashboard layout that surfaces each rack's state, status details, and
-  per-strip current draw when the Digital Loggers API provides the information.
-* Automatic refresh every five seconds so the UI reflects the latest state after manual or
-  scripted changes.
-* Embedded firmware support for caching strip current measurements, exposing total load, and
-  reporting command success to callers of `/status`.
+*   **Sequential Power Control**: Automatically staggers power-on and power-off commands across multiple racks with a configurable delay (default 1.5s) to prevent circuit breaker trips from high inrush current.
+*   **Integrated Dashboard**: A responsive, mobile-friendly web dashboard is served directly from the bridge hardware, providing real-time status and telemetry.
+*   **Aggregate Telemetry**: Monitors current draw from all connected strips and displays total system load.
+*   **Hardware Feedback**: Physical status LED provides instant visual feedback:
+    *   **Solid**: System is fully ON.
+    *   **Off**: System is fully OFF.
+    *   **Pulsing**: Sequencing in progress.
+    *   **Fast Blink**: Error/Communication failure.
+*   **Physical Override**: Supports a physical push-button to toggle the entire system without needing the web UI.
+*   **Privacy First**: No cloud dependency. All communication stays within your local network.
+
+## Hardware Requirements
+
+*   **Microcontroller**: ESP8266 (e.g., NodeMCU, Wemos D1 Mini) or ESP32.
+*   **Power Strips**: Digital Loggers Web Power Switch Pro (or any DLI model supporting the REST API).
+*   **Components**:
+    *   1x Push button (connected to GPIO 12 / D6).
+    *   1x LED with resistor (connected to GPIO 14 / D5).
 
 ## Getting Started
 
-### Control dashboard
+### 1. Firmware Configuration
 
-1. Host `control-dashboard.html` on any static web server or open it directly in a browser.
-2. Edit the `stations` array near the bottom of the file so each entry points at the base URL
-   of the ESP controller that fronts a Web Power Switch.
-3. The dashboard will poll each controller's `/status` endpoint every five seconds and render
-   the response, including amperage readings if the backend makes them available.
+1.  Open `webPowerSwitchAllOutlets` in the Arduino IDE.
+2.  Install the **ArduinoJson** library via the Library Manager.
+3.  Update the **USER CONFIGURATION** section at the top of the file:
+    *   Set your Wi-Fi SSID and Password.
+    *   Enter the IP addresses and names for your power strips in the `powerStrips` array.
+    *   Configure `SEQUENCE_DELAY_MS` if your equipment requires more time between racks.
 
-### ESP bridge firmware
+### 2. Deployment
 
-1. Open `webPowerSwitchAllOutlets` in the Arduino IDE or PlatformIO.
-2. Update the Wi-Fi credentials and IP addresses at the top of the file to match your
-   environment.
-3. Flash the firmware to a supported ESP8266/ESP32 board. The sketch hosts HTTP endpoints for
-   `/on`, `/off`, `/error`, and `/status` and forwards commands to the configured Web Power
-   Switch devices using the Digital Loggers REST API.
+1.  Flash the firmware to your ESP board.
+2.  Open the Serial Monitor (115200 baud) to find the IP address assigned to the bridge.
+3.  Navigate to that IP address in any web browser to access the control dashboard.
 
-Refer to the official Digital Loggers API reference for endpoint details and parameters:
-https://www.digital-loggers.com/downloads/Product%20Manuals/Power%20Control/rest_api_reference.pdf
+## API Reference
 
-## Development notes
+The bridge exposes the following endpoints:
 
-* The UI assumes the `/status` response returns JSON including `power`, `details`,
-  `total_current`, and a `strips` array with `name`, `current`, and `current_available`
-  properties for each Web Power Switch strip.
-* Current telemetry is optional; when it is absent the dashboard gracefully displays an
-  informative placeholder message.
-* The firmware code relies on the ArduinoJson library and the ESP HTTP client stack that ships
-  with the ESP8266/ESP32 Arduino cores.
+*   `GET /`: Serves the integrated control dashboard.
+*   `GET /status`: Returns a JSON object containing global state and per-strip telemetry.
+*   `GET /on`: Triggers the sequential power-on routine.
+*   `GET /off`: Triggers the sequential power-off routine.
 
+## Development Notes
+
+*   **Stability**: Communication uses optimized batch commands (`?a=ON/OFF`) and caches successful telemetry endpoints to ensure the UI remains snappy even with many strips.
+*   **Memory**: Uses `DynamicJsonDocument` to handle varying numbers of connected devices safely.
+*   **CORS**: The API supports Cross-Origin Resource Sharing, allowing it to be integrated into larger monitoring systems if desired.
+
+---
+*Note: This is a public repository. Ensure you never commit your actual Wi-Fi credentials or private IP addresses.*
