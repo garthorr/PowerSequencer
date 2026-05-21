@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Control Dashboard</title>
+    <title>Power Sequencer Dashboard</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -16,6 +16,7 @@
         --on: #15803d;
         --off: #dc2626;
         --error: #b45309;
+        --seq: #6366f1;
       }
 
       @media (prefers-color-scheme: dark) {
@@ -29,499 +30,193 @@
           --on: #22c55e;
           --off: #f87171;
           --error: #fbbf24;
+          --seq: #818cf8;
         }
       }
 
-      * {
-        box-sizing: border-box;
-      }
-
+      * { box-sizing: border-box; }
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+        font-family: system-ui, -apple-system, sans-serif;
         background: var(--bg);
         color: var(--text);
+        padding: 2rem 1rem;
         display: flex;
         flex-direction: column;
-        gap: 1.5rem;
-        padding: 2rem clamp(1.25rem, 4vw, 4rem);
+        align-items: center;
+        gap: 2rem;
       }
 
-      header {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-        text-align: center;
-      }
-
-      header h1 {
-        margin: 0;
-        font-size: clamp(1.75rem, 4vw, 2.5rem);
-        letter-spacing: 0.03em;
-      }
-
-      header p {
-        margin: 0;
-        color: var(--muted);
-      }
-
-      .grid {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 1.5rem;
-        width: min(1100px, 100%);
-        margin: 0 auto;
-      }
-
-      @media (min-width: 700px) {
-        .grid {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-      }
-
-      .station {
+      header { text-align: center; }
+      h1 { margin: 0; font-size: 2rem; }
+      .main-card {
         background: var(--card-bg);
         border: 1px solid var(--border);
         border-radius: 1rem;
-        padding: 1.5rem;
-        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+        padding: 2rem;
+        width: 100%;
+        max-width: 600px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
         display: flex;
         flex-direction: column;
-        gap: 1.25rem;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        gap: 1.5rem;
       }
 
-      .station:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 22px 45px rgba(15, 23, 42, 0.12);
-      }
-
-      .station h2 {
-        margin: 0;
-        font-size: 1.3rem;
-        letter-spacing: 0.02em;
-      }
-
-      .status-row {
+      .status-banner {
         display: flex;
+        justify-content: space-between;
         align-items: center;
-        gap: 0.75rem;
+        padding: 1rem;
+        border-radius: 0.75rem;
+        background: color-mix(in srgb, var(--accent) 10%, transparent);
       }
 
-      .indicator {
-        width: 16px;
-        height: 16px;
-        border-radius: 50%;
-        border: 3px solid currentColor;
-        transition: color 0.2s ease, box-shadow 0.2s ease;
+      .state-badge {
+        padding: 0.5rem 1rem;
+        border-radius: 2rem;
+        font-weight: bold;
+        text-transform: uppercase;
+        font-size: 0.875rem;
       }
 
-      .indicator[data-state="off"] {
-        color: var(--off);
-        box-shadow: 0 0 0 3px color-mix(in srgb, var(--off) 20%, transparent);
-      }
+      .state-badge[data-state="on"] { background: var(--on); color: white; }
+      .state-badge[data-state="off"] { background: var(--off); color: white; }
+      .state-badge[data-state="sequencing"] { background: var(--seq); color: white; animation: pulse 1.5s infinite; }
+      .state-badge[data-state="error"] { background: var(--error); color: white; }
 
-      .indicator[data-state="on"] {
-        color: var(--on);
-        box-shadow: 0 0 0 3px color-mix(in srgb, var(--on) 20%, transparent);
-      }
-
-      .indicator[data-state="error"] {
-        color: var(--error);
-        box-shadow: 0 0 0 3px color-mix(in srgb, var(--error) 20%, transparent);
-      }
-
-      .status-label {
-        font-weight: 600;
-        letter-spacing: 0.03em;
+      @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.6; }
+        100% { opacity: 1; }
       }
 
       .controls {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.75rem;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
       }
 
       button {
-        flex: 1 1 100px;
-        padding: 0.55rem 0.9rem;
-        border-radius: 0.65rem;
-        border: 1px solid transparent;
-        background: var(--accent);
-        color: #fff;
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        font-size: 0.85rem;
-        cursor: pointer;
-        transition: background 0.2s ease, transform 0.15s ease;
-      }
-
-      button:hover {
-        transform: translateY(-1px);
-      }
-
-      button[data-command="off"] {
-        background: var(--off);
-      }
-
-      button[data-command="error"] {
-        background: var(--error);
-      }
-
-      .status-details {
-        margin: 0;
-        color: var(--muted);
-        font-size: 0.85rem;
-      }
-
-      .telemetry {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-      }
-
-      .telemetry-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 0.35rem 0.5rem;
+        padding: 1rem;
         border-radius: 0.5rem;
-        background: color-mix(in srgb, var(--accent) 7%, transparent);
+        border: none;
+        font-weight: bold;
+        cursor: pointer;
+        font-size: 1rem;
+        transition: transform 0.1s;
       }
 
-      .telemetry-label {
-        font-weight: 600;
-        letter-spacing: 0.03em;
-      }
+      button:active { transform: scale(0.98); }
+      .btn-on { background: var(--on); color: white; }
+      .btn-off { background: var(--off); color: white; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-      .telemetry-value {
-        font-variant-numeric: tabular-nums;
-        font-weight: 700;
-        color: var(--accent);
-      }
-
-      .telemetry-value.unavailable {
-        color: var(--muted);
-        font-weight: 600;
-      }
-
-      .telemetry-empty {
-        margin: 0;
-        font-size: 0.85rem;
-        color: var(--muted);
-        font-style: italic;
-      }
-
-      .strip-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
+      .strips-list {
         display: flex;
         flex-direction: column;
-        gap: 0.5rem;
+        gap: 0.75rem;
       }
 
-      .strip-list li {
+      .strip-item {
         display: flex;
         justify-content: space-between;
-        gap: 0.75rem;
-        padding-bottom: 0.35rem;
+        padding: 0.75rem;
         border-bottom: 1px solid var(--border);
       }
 
-      .strip-list li:last-child {
-        border-bottom: none;
-      }
+      .strip-item:last-child { border-bottom: none; }
+      .amps { font-weight: bold; color: var(--accent); }
 
-      .strip-label {
-        font-weight: 500;
-      }
-
-      .strip-value {
-        font-weight: 600;
-        color: var(--accent);
-        font-variant-numeric: tabular-nums;
-      }
-
-      .strip-value.unavailable {
-        color: var(--muted);
-        font-weight: 500;
-      }
-
-      footer {
-        text-align: center;
-        color: var(--muted);
-        font-size: 0.85rem;
-      }
+      footer { color: var(--muted); font-size: 0.875rem; }
     </style>
   </head>
   <body>
     <header>
-      <h1>Power Station Control Dashboard</h1>
-      <p>Monitor and manage the current state of each connected station.</p>
+      <h1>Power Sequencer</h1>
+      <p>Master Control Bridge</p>
     </header>
-    <main class="grid" id="dashboard"></main>
-    <footer>
-      Tap a command to send a request; indicators reflect device responses and
-      refresh every 5 seconds.
-    </footer>
 
-    <template id="station-template">
-      <article class="station">
-        <header>
-          <h2 class="station-name"></h2>
-          <div class="status-row">
-            <span class="indicator" data-state="off" aria-hidden="true"></span>
-            <span class="status-label" data-label>OFF</span>
-          </div>
-        </header>
-        <div class="controls">
-          <button type="button" data-command="on">Turn On</button>
-          <button type="button" data-command="off">Turn Off</button>
-          <button type="button" data-command="error">Mark Error</button>
+    <main class="main-card">
+      <div class="status-banner">
+        <span>System Status</span>
+        <span id="system-state" class="state-badge" data-state="off">OFF</span>
+      </div>
+
+      <div class="controls">
+        <button id="btn-on" class="btn-on">SEQUENCE ON</button>
+        <button id="btn-off" class="btn-off">SEQUENCE OFF</button>
+      </div>
+
+      <div id="telemetry">
+        <div class="strip-item">
+          <strong>Total Load</strong>
+          <span id="total-amps" class="amps">-- A</span>
         </div>
-        <p class="status-details" data-details hidden></p>
-        <div class="telemetry">
-          <div class="telemetry-row" data-total-current hidden>
-            <span class="telemetry-label">Total Current</span>
-            <span class="telemetry-value" data-total-current-value>--</span>
-          </div>
-          <ul class="strip-list" data-strip-list></ul>
-          <p class="telemetry-empty" data-telemetry-empty hidden>
-            No current telemetry available for this station.
-          </p>
+        <div id="strips-container" class="strips-list">
+          <!-- Strips added here -->
         </div>
-      </article>
-    </template>
+      </div>
+    </main>
+
+    <footer>Refreshes every 5 seconds</footer>
 
     <script>
-      const stations = [
-        {
-          id: "foh-power",
-          name: "FOH Power",
-          baseUrl: "http://foh-power.local"
-        },
-        {
-          id: "stage-left",
-          name: "Stage Left Power",
-          baseUrl: "http://stage-left.local"
-        },
-        {
-          id: "stage-right",
-          name: "Stage Right Power",
-          baseUrl: "http://stage-right.local"
-        },
-        {
-          id: "amp-rack",
-          name: "Amp Rack Power",
-          baseUrl: "http://amp-rack.local"
-        }
-      ];
+      const stateEl = document.getElementById('system-state');
+      const totalEl = document.getElementById('total-amps');
+      const container = document.getElementById('strips-container');
+      const btnOn = document.getElementById('btn-on');
+      const btnOff = document.getElementById('btn-off');
 
-      const stateLabels = {
-        on: "ON",
-        off: "OFF",
-        error: "ERROR"
-      };
-
-      const dashboard = document.getElementById("dashboard");
-      const template = document.getElementById("station-template");
-
-      const stationElements = new Map();
-
-      const formatAmps = (value) => `${value.toFixed(2)} A`;
-
-      const applyState = (element, state, details = "") => {
-        const indicator = element.querySelector(".indicator");
-        const label = element.querySelector("[data-label]");
-        const normalized = state === "on" || state === "off" ? state : "error";
-        indicator.dataset.state = normalized;
-        label.textContent = stateLabels[normalized] ?? normalized.toUpperCase();
-
-        const detailsNode = element.querySelector("[data-details]");
-        if (!detailsNode) return;
-
-        if (details && details.trim().length > 0) {
-          detailsNode.textContent = details;
-          detailsNode.hidden = false;
-        } else {
-          detailsNode.hidden = true;
-          detailsNode.textContent = "";
-        }
-      };
-
-      const applyTelemetry = (element, telemetry) => {
-        const totalRow = element.querySelector("[data-total-current]");
-        const totalValue = element.querySelector("[data-total-current-value]");
-        const stripList = element.querySelector("[data-strip-list]");
-        const emptyMessage = element.querySelector("[data-telemetry-empty]");
-
-        if (stripList) {
-          stripList.innerHTML = "";
-          stripList.hidden = true;
-        }
-
-        if (emptyMessage) {
-          emptyMessage.hidden = true;
-        }
-
-        const hasTelemetry =
-          telemetry &&
-          (Number.isFinite(telemetry.total) ||
-            (Array.isArray(telemetry.strips) && telemetry.strips.length > 0));
-
-        if (!hasTelemetry) {
-          if (totalRow) {
-            totalRow.hidden = true;
-          }
-          if (emptyMessage) {
-            emptyMessage.hidden = false;
-          }
-          return;
-        }
-
-        if (Number.isFinite(telemetry.total) && totalRow && totalValue) {
-          totalValue.textContent = formatAmps(telemetry.total);
-          totalValue.classList.remove("unavailable");
-          totalRow.hidden = false;
-        } else if (totalRow && totalValue) {
-          totalValue.textContent = "N/A";
-          totalValue.classList.add("unavailable");
-          totalRow.hidden = false;
-        }
-
-        if (Array.isArray(telemetry.strips) && stripList) {
-          stripList.hidden = telemetry.strips.length === 0;
-          telemetry.strips.forEach((strip) => {
-            const item = document.createElement("li");
-            const label = document.createElement("span");
-            const value = document.createElement("span");
-
-            label.className = "strip-label";
-            value.className = "strip-value";
-
-            label.textContent = strip.name;
-
-            if (strip.available && Number.isFinite(strip.amps)) {
-              value.textContent = formatAmps(strip.amps);
-              value.classList.remove("unavailable");
-            } else {
-              value.textContent = "N/A";
-              value.classList.add("unavailable");
-            }
-
-            item.append(label, value);
-            stripList.appendChild(item);
-          });
-
-          if (stripList.childElementCount === 0 && emptyMessage) {
-            emptyMessage.hidden = false;
-          }
-        }
-      };
-
-      stations.forEach((station) => {
-        const { id, name } = station;
-        const node = template.content.firstElementChild.cloneNode(true);
-        node.querySelector(".station-name").textContent = name;
-        node.dataset.stationId = id;
-
-        node.querySelectorAll("button").forEach((button) => {
-          button.addEventListener("click", () => {
-            const command = button.dataset.command;
-            sendCommand(station, command);
-          });
-        });
-
-        dashboard.appendChild(node);
-        stationElements.set(id, node);
-      });
-
-      const sendCommand = async (station, command) => {
-        const url = `${station.baseUrl}/${command}`;
-
+      async function update() {
         try {
-          await fetch(url, { method: "GET" });
-        } catch (error) {
-          console.error(`Failed to send ${command} to ${station.name}:`, error);
-        } finally {
-          setTimeout(refreshStatuses, 250);
-        }
-      };
+          const res = await fetch('/status');
+          const data = await res.json();
 
-      const refreshStatuses = async () => {
-        await Promise.all(
-          stations.map(async (station) => {
-            const element = stationElements.get(station.id);
-            if (!element) return;
+          stateEl.textContent = data.power.toUpperCase();
+          stateEl.dataset.state = data.power;
 
-            const status = await readStatus(station);
-            if (!status) {
-              applyState(
-                element,
-                "error",
-                "Unable to retrieve status from this device."
-              );
-              applyTelemetry(element, null);
-              return;
-            }
+          const isBusy = data.power === 'sequencing';
+          btnOn.disabled = isBusy;
+          btnOff.disabled = isBusy;
 
-            applyState(element, status.state, status.details);
-            applyTelemetry(element, status.telemetry);
-          })
-        );
-      };
+          totalEl.textContent = data.total_current.toFixed(2) + ' A';
 
-      const readStatus = async (station) => {
-        const url = `${station.baseUrl}/status`;
-
-        try {
-          const response = await fetch(url, {
-            method: "GET",
-            headers: { "Cache-Control": "no-cache" }
+          container.innerHTML = '';
+          data.strips.forEach(strip => {
+            const div = document.createElement('div');
+            div.className = 'strip-item';
+            div.innerHTML = `
+              <span>${strip.name}</span>
+              <span class="amps">${strip.current_available ? strip.current.toFixed(2) + ' A' : 'N/A'}</span>
+            `;
+            container.appendChild(div);
           });
-
-          if (!response.ok) {
-            throw new Error(`Status request failed with ${response.status}`);
-          }
-
-          const payload = await response.json();
-          const state = String(payload?.power ?? "error").toLowerCase();
-          const details =
-            typeof payload?.details === "string" ? payload.details : "";
-
-          const totalCurrentValue = Number(payload?.total_current);
-          const strips = Array.isArray(payload?.strips)
-            ? payload.strips.map((strip, index) => {
-                const rawName =
-                  typeof strip?.name === "string" ? strip.name.trim() : "";
-                const name = rawName.length > 0 ? rawName : `Strip ${index + 1}`;
-                const ampsValue = Number(strip?.current);
-                const amps = Number.isFinite(ampsValue) ? ampsValue : null;
-                const available =
-                  strip?.current_available === true || Number.isFinite(amps);
-                return { name, amps, available };
-              })
-            : [];
-
-          return {
-            state: state === "on" || state === "off" ? state : "error",
-            details,
-            telemetry: {
-              total: Number.isFinite(totalCurrentValue) ? totalCurrentValue : null,
-              strips
-            }
-          };
-        } catch (error) {
-          console.error(`Failed to read status for ${station.name}:`, error);
-          return null;
+        } catch (e) {
+          stateEl.textContent = 'CONN ERROR';
+          stateEl.dataset.state = 'error';
         }
-      };
+      }
 
-      refreshStatuses();
-      setInterval(refreshStatuses, 5000);
+      async function send(cmd) {
+        try {
+          stateEl.textContent = 'SENDING...';
+          stateEl.dataset.state = 'sequencing';
+          btnOn.disabled = true;
+          btnOff.disabled = true;
+          await fetch('/' + cmd);
+          setTimeout(update, 500);
+        } catch (e) {
+          alert('Failed to send command');
+          update();
+        }
+      }
+
+      btnOn.onclick = () => send('on');
+      btnOff.onclick = () => send('off');
+
+      setInterval(update, 5000);
+      update();
     </script>
   </body>
 </html>
