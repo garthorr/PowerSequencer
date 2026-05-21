@@ -3,30 +3,20 @@
  *
  * This firmware coordinates multiple Digital Loggers units, providing:
  * - Sequential power-on/off to manage inrush current.
- * - Hardware feedback via LEDs (Solid = ON, Pulsing = Sequencing, Blinking = Error).
+ * - Hardware feedback via NeoPixels: per-strip (green/blue/amber/red) + global indicator.
  * - A built-in web dashboard for remote control and telemetry.
  * - Optimized background polling for stability.
  */
 
-#if defined(ESP8266)
-#  include <ESP8266WiFi.h>
-#  include <ESP8266HTTPClient.h>
-#  include <ESP8266WebServer.h>
-   using HttpServer = ESP8266WebServer;
-#elif defined(ESP32)
-#  include <WiFi.h>
-#  include <HTTPClient.h>
-#  include <WebServer.h>
-   using HttpServer = WebServer;
-#endif
+#include <ETH.h>
+#include <HTTPClient.h>
+#include <WebServer.h>
+#include <Adafruit_NeoPixel.h>
 #include <ArduinoJson.h>
 
 // ==========================================
 // USER CONFIGURATION
 // ==========================================
-
-const char* ssid     = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
 
 const char* powerSwitchUser = "admin";
 const char* powerSwitchPass = "1234";
@@ -58,8 +48,9 @@ PowerStrip powerStrips[] = {
   {"Rack 4", "192.168.0.103", "", StripState::Unknown, 0.0f, false}
 };
 
-#define BUTTON_PIN     12
-#define STATUS_LED_PIN 14
+#define BUTTON_PIN      12
+#define NEOPIXEL_PIN     4
+#define NEOPIXEL_COUNT   5   // pixels 0-3: per strip, pixel 4: global
 
 // ==========================================
 // INTERNAL LOGIC
@@ -69,7 +60,20 @@ const uint8_t INDEX_HTML[] PROGMEM = {0x3c, 0x21, 0x44, 0x4f, 0x43, 0x54, 0x59, 
 const size_t INDEX_HTML_SIZE = 6239;
 
 const uint8_t STRIP_COUNT = sizeof(powerStrips) / sizeof(powerStrips[0]);
-HttpServer server(80);
+WebServer server(80);
+Adafruit_NeoPixel pixels(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+
+static bool eth_connected = false;
+
+void onEthEvent(WiFiEvent_t event) {
+  switch (event) {
+    case ARDUINO_EVENT_ETH_START:        ETH.setHostname("powersequencer"); break;
+    case ARDUINO_EVENT_ETH_GOT_IP:       eth_connected = true;              break;
+    case ARDUINO_EVENT_ETH_DISCONNECTED:
+    case ARDUINO_EVENT_ETH_STOP:         eth_connected = false;             break;
+    default: break;
+  }
+}
 
 enum class SystemState : uint8_t {
   Off,
@@ -84,7 +88,8 @@ SystemState globalState = SystemState::Off;
 void handleRoot();
 void handleStatus();
 void handleOptions();
-void updateStateIndicator();
+uint32_t colorForStripState(StripState s);
+void updateNeoPixels();
 bool applyCommandSequentially(const String& command);
 void pollStrip(uint8_t index);
 SystemState calculateGlobalState();
@@ -92,15 +97,19 @@ SystemState calculateGlobalState();
 void setup() {
   Serial.begin(115200);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  pinMode(STATUS_LED_PIN, OUTPUT);
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  pixels.begin();
+  pixels.setBrightness(80);
+  pixels.clear();
+  pixels.show();
+
+  WiFi.onEvent(onEthEvent);
+  ETH.begin(1, 16, 23, 18, ETH_PHY_LAN8720, ETH_CLOCK_GPIO0_IN);
+  while (!eth_connected) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\nConnected. IP: " + WiFi.localIP().toString());
+  Serial.println("\nConnected. IP: " + ETH.localIP().toString());
 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
@@ -134,7 +143,7 @@ void loop() {
     }
   }
 
-  updateStateIndicator();
+  updateNeoPixels();
 
   if (digitalRead(BUTTON_PIN) == LOW) {
     delay(50);
@@ -146,22 +155,46 @@ void loop() {
   }
 }
 
-void updateStateIndicator() {
+uint32_t colorForStripState(StripState s) {
+  switch (s) {
+    case StripState::On:    return pixels.Color(0, 150, 0);
+    case StripState::Off:   return pixels.Color(0, 0, 50);
+    case StripState::Mixed: return pixels.Color(180, 80, 0);
+    case StripState::Error: return pixels.Color(150, 0, 0);
+    default:                return pixels.Color(20, 20, 20);
+  }
+}
+
+void updateNeoPixels() {
   static unsigned long lastToggle = 0;
   static bool ledState = false;
 
+  for (uint8_t i = 0; i < STRIP_COUNT; i++)
+    pixels.setPixelColor(i, colorForStripState(powerStrips[i].state));
+
   switch (globalState) {
-    case SystemState::On: digitalWrite(STATUS_LED_PIN, HIGH); break;
-    case SystemState::Off: digitalWrite(STATUS_LED_PIN, LOW); break;
+    case SystemState::On:
+      pixels.setPixelColor(STRIP_COUNT, pixels.Color(0, 150, 0));
+      break;
+    case SystemState::Off:
+      pixels.setPixelColor(STRIP_COUNT, pixels.Color(0, 0, 50));
+      break;
     case SystemState::Sequencing:
-      if (millis() - lastToggle >= 250) { lastToggle = millis(); ledState = !ledState; digitalWrite(STATUS_LED_PIN, ledState); }
+      if (millis() - lastToggle >= 250) { lastToggle = millis(); ledState = !ledState; }
+      pixels.setPixelColor(STRIP_COUNT, ledState ? pixels.Color(80, 0, 120) : pixels.Color(0, 0, 0));
+      break;
+    case SystemState::Mixed:
+      if (millis() - lastToggle >= 100) { lastToggle = millis(); ledState = !ledState; }
+      pixels.setPixelColor(STRIP_COUNT, ledState ? pixels.Color(180, 80, 0) : pixels.Color(0, 0, 0));
       break;
     case SystemState::Error:
-    case SystemState::Mixed:
-      if (millis() - lastToggle >= 100) { lastToggle = millis(); ledState = !ledState; digitalWrite(STATUS_LED_PIN, ledState); }
+      if (millis() - lastToggle >= 100) { lastToggle = millis(); ledState = !ledState; }
+      pixels.setPixelColor(STRIP_COUNT, ledState ? pixels.Color(150, 0, 0) : pixels.Color(0, 0, 0));
       break;
-    default: digitalWrite(STATUS_LED_PIN, LOW);
+    default:
+      pixels.setPixelColor(STRIP_COUNT, pixels.Color(0, 0, 0));
   }
+  pixels.show();
 }
 
 bool sendBatchCommand(const PowerStrip& strip, const String& command) {
@@ -177,22 +210,33 @@ bool sendBatchCommand(const PowerStrip& strip, const String& command) {
 }
 
 bool applyCommandSequentially(const String& command) {
+  static unsigned long seqLastToggle = 0;
+  static bool seqLedState = false;
+
   globalState = SystemState::Sequencing;
   bool allSuccess = true;
   for (uint8_t i = 0; i < STRIP_COUNT; i++) {
-    if (!sendBatchCommand(powerStrips[i], command)) {
-      allSuccess = false;
-    }
+    pixels.setPixelColor(i, pixels.Color(200, 200, 200));
+    pixels.show();
+
+    if (!sendBatchCommand(powerStrips[i], command)) allSuccess = false;
+
+    pixels.setPixelColor(i, pixels.Color(40, 0, 60));
+
     if (i < STRIP_COUNT - 1) {
       unsigned long start = millis();
-      while(millis() - start < SEQUENCE_DELAY_MS) {
+      while (millis() - start < SEQUENCE_DELAY_MS) {
         server.handleClient();
-        updateStateIndicator();
+        if (millis() - seqLastToggle >= 250) {
+          seqLastToggle = millis();
+          seqLedState = !seqLedState;
+          pixels.setPixelColor(STRIP_COUNT, seqLedState ? pixels.Color(80, 0, 120) : pixels.Color(0, 0, 0));
+          pixels.show();
+        }
         delay(10);
       }
     }
   }
-  // Force a full poll after sequencing
   for (uint8_t i = 0; i < STRIP_COUNT; i++) pollStrip(i);
   globalState = calculateGlobalState();
   return allSuccess;
