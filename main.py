@@ -5,12 +5,13 @@ from core.sequence_engine import SequenceEngine
 from core.status_aggregator import StatusAggregator
 from modules.dli_client import DigitalLoggersClient
 import time
+import os
 
 app = Flask(__name__)
 
 # Initialize Architecture
 settings = SettingsStore()
-dli = DigitalLoggersClient(demo_mode=settings.settings.get("demo_mode", True))
+dli = DigitalLoggersClient()
 state_manager = StateManager(settings, dli)
 aggregator = StatusAggregator(dli, settings, state_manager)
 sequence_engine = SequenceEngine(dli, settings, state_manager)
@@ -20,7 +21,7 @@ aggregator.start()
 
 @app.route("/")
 def index():
-    return send_from_directory(".", "control-dashboard.html")
+    return send_from_directory("web", "control-dashboard.html")
 
 @app.route("/status")
 def status():
@@ -40,11 +41,8 @@ def sequence_off():
 def save_config():
     new_racks = request.json
     settings.save({"racks": new_racks})
-    # In a real ESP32 we might reboot, here we just refresh
     state_manager.refresh_all()
     return "OK"
 
 if __name__ == "__main__":
-    # Small delay to let aggregator get first poll
-    time.sleep(1)
     app.run(host="0.0.0.0", port=8003)

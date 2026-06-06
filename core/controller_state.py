@@ -10,6 +10,12 @@ class SystemState(Enum):
     SEQUENCING = "sequencing"
 
 @dataclass
+class OutletStatus:
+    name: str
+    state: bool
+    current: float = 0.0
+
+@dataclass
 class RackStatus:
     name: str
     ip: str
@@ -17,6 +23,7 @@ class RackStatus:
     current: float = 0.0
     current_available: bool = False
     online: bool = False
+    outlets: List[OutletStatus] = field(default_factory=list)
 
 @dataclass
 class GlobalState:

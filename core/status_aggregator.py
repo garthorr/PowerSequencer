@@ -1,6 +1,6 @@
 import time
 import threading
-from .controller_state import RackStatus, SystemState
+from .controller_state import RackStatus, OutletStatus, SystemState
 
 class StatusAggregator:
     def __init__(self, dli_client, settings_store, state_manager):
@@ -29,13 +29,16 @@ class StatusAggregator:
 
         for r in racks:
             status = self.dli.get_status(r["ip"])
+            outlets = [OutletStatus(name=o["name"], state=o["state"]) for o in status.get("outlets", [])]
+
             rack_stat = RackStatus(
                 name=r["name"],
                 ip=r["ip"],
                 state=status.get("state", "unknown"),
                 current=status.get("amps", 0.0),
                 current_available=status.get("online", False),
-                online=status.get("online", False)
+                online=status.get("online", False),
+                outlets=outlets
             )
             results.append(rack_stat)
             if status.get("online"):

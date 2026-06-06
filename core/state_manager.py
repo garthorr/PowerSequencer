@@ -49,14 +49,20 @@ class StateManager:
         with self._lock:
             return {
                 "power": self.state.power.value,
-                "total_current": self.state.total_current,
+                "total_current": round(self.state.total_current, 2),
                 "strips": [
                     {
                         "name": r.name,
                         "ip": r.ip,
                         "state": r.state,
-                        "current": r.current,
-                        "current_available": r.current_available
+                        "current": round(r.current, 2),
+                        "current_available": r.current_available,
+                        "outlets": [
+                            {
+                                "name": o.name,
+                                "state": o.state
+                            } for o in r.outlets
+                        ]
                     } for r in self.state.racks
                 ]
             }

@@ -13,11 +13,12 @@ class SettingsStore:
         return {
             "racks": [
                 {"name": "Rack 1", "ip": "192.168.0.101"},
-                {"name": "Rack 2", "ip": "192.168.0.102"}
+                {"name": "Rack 2", "ip": "192.168.0.102"},
+                {"name": "Rack 3", "ip": "192.168.0.103"},
+                {"name": "Rack 4", "ip": "192.168.0.104"}
             ],
             "sequence_delay_ms": 1500,
-            "poll_interval_ms": 5000,
-            "demo_mode": True
+            "poll_interval_ms": 5000
         }
 
     def save(self, new_settings):
