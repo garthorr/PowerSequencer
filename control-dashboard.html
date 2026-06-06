@@ -87,6 +87,7 @@
       .state-badge[data-state="off"] { background: var(--off); color: white; }
       .state-badge[data-state="sequencing"] { background: var(--seq); color: white; animation: pulse 1.5s infinite; }
       .state-badge[data-state="error"] { background: var(--error); color: white; }
+      .state-badge[data-state="mixed"] { background: var(--error); color: white; }
 
       @keyframes pulse {
         0% { opacity: 1; }
@@ -198,7 +199,7 @@
 
       <div class="settings-actions">
         <button id="btn-config-cancel" class="btn-ghost">Cancel</button>
-        <button id="btn-config-save" class="btn-primary">Save & Reboot</button>
+        <button id="btn-config-save" class="btn-primary">Save Changes</button>
       </div>
     </main>
 
@@ -308,7 +309,7 @@
       document.getElementById('btn-config-cancel').onclick = () => btnSettingsToggle.click();
 
       document.getElementById('btn-config-save').onclick = async () => {
-        if (confirm('Save settings and reboot bridge?')) {
+        if (confirm('Save settings?')) {
           try {
             const res = await fetch('/save_config', {
               method: 'POST',
@@ -316,8 +317,9 @@
               body: JSON.stringify(currentConfig)
             });
             if (res.ok) {
-              alert('Settings saved. Bridge is rebooting...');
-              setTimeout(() => location.reload(), 2000);
+              alert('Settings saved.');
+              btnSettingsToggle.click();
+              update();
             } else {
               alert('Error saving settings.');
             }

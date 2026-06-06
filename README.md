@@ -1,61 +1,58 @@
 # PowerSequencer Master Bridge
 
-PowerSequencer is a master control bridge for Digital Loggers Web Power Switch units. It coordinates multiple AV racks, providing synchronized power sequencing and aggregate telemetry monitoring.
+This project is a master control bridge for Digital Loggers Web Power Switch units. It coordinates multiple AV racks, providing synchronized power sequencing and aggregate telemetry monitoring.
 
-This firmware is designed for **ESP32** hardware, with native support for the **WT32-ETH01** (Wired Ethernet) for maximum stability.
+The system is designed with a **modular architecture** that can run locally (in Python) for testing/demo purposes and is ready to be ported to **ESP32/Olimex POE** hardware.
 
-## Features
+## Architecture
 
-*   **Sequential Power Control**: Automatically staggers power-on and power-off commands across multiple racks with a 1.5s delay to manage inrush current safely.
-*   **Web-Based Configuration**: Easily add, remove, or rename racks and update their IP addresses directly through the web dashboard.
-*   **Dynamic Rack Management**: Supports up to 8 independent power strips.
-*   **Wired Ethernet Support**: Native support for WT32-ETH01 (LAN8720 PHY) to avoid Wi-Fi interference in critical environments.
-*   **Persistent Settings**: Configuration is saved to the ESP32's non-volatile memory (Preferences) and survives reboots.
-*   **Integrated Dashboard**: A responsive, mobile-friendly control interface served directly from the hardware.
-*   **Hardware Feedback**:
-    *   **Physical Button**: Toggle the entire system via a button on GPIO 12.
-    *   **LED Patterns**: Visual status on GPIO 14 (Solid = ON, Pulsing = Sequencing, Fast Blink = Error/Mixed).
+*   **SettingsStore**: Manages persistent configuration (Rack Names, IPs).
+*   **DigitalLoggersClient**: Handles communication with the DLI REST API.
+*   **SequenceEngine**: Executes sequential power-on/off routines with non-blocking delays.
+*   **StatusAggregator**: Performs background round-robin polling of all racks.
+*   **StateManager**: The source of truth for the system's `ControllerState`.
+*   **WebApi**: Provides a RESTful interface for the Dashboard UI.
 
 ---
 
-## Hardware Setup (WT32-ETH01)
+## Local Usage (Demo Mode)
 
-The WT32-ETH01 is the recommended hardware for "tank-like" reliability.
+To run the master bridge locally on your computer:
 
-### Pinout
-*   **Button**: Connect a momentary push button between **IO12** and **GND**.
-    *   *Note: IO12 is a strapping pin. Ensure the button is not held down during initial power-up/reboot.*
-*   **LED**: Connect an LED (with 220Ω resistor) to **IO14**.
-
----
-
-## Getting Started
-
-### 1. Firmware Configuration
-1.  Open `webPowerSwitchAllOutlets` in the Arduino IDE.
-2.  Install the **ArduinoJson** library via the Library Manager.
-3.  In the **USER CONFIGURATION** section:
-    *   Set `#define USE_ETHERNET 1` if using a WT32-ETH01.
-    *   Set your Wi-Fi credentials if using a standard ESP32 in Wi-Fi mode.
-    *   Ensure `powerSwitchUser` and `powerSwitchPass` match your Digital Loggers admin credentials.
-4.  Flash the firmware to your device.
-
-### 2. Web Configuration (For Non-Tech Personnel)
-1.  Find the bridge IP address in the Serial Monitor (or your router's client list).
-2.  Navigate to that IP in any web browser.
-3.  Click the **⚙ Settings** button in the header.
-4.  **Manage Racks**:
-    *   **Add Rack**: Click "+ Add Rack" to add a new unit.
-    *   **Edit**: Enter the Name and IP address for each rack.
-    *   **Remove**: Click the "✕" button next to a rack to remove it.
-5.  Click **Save & Reboot**. The bridge will restart and begin managing the new configuration.
+1.  **Install Dependencies**:
+    ```bash
+    pip install flask requests
+    ```
+2.  **Start the Bridge**:
+    ```bash
+    python main.py
+    ```
+3.  **Access the UI**: Open `http://localhost:8003` in your browser.
+    *   By default, it starts in **Demo Mode** with mock data.
+    *   To use real racks, edit `settings.json` and set `"demo_mode": false`.
 
 ---
 
-## Troubleshooting
-*   **Bridge won't boot**: Ensure no button is connected to IO12 that might be pulling the pin LOW during startup.
-*   **Racks show "CONN ERROR"**: Verify the IP address in Settings and ensure the Digital Loggers unit has "Allow REST-style API" enabled in its External APIs settings.
-*   **Dashboard is slow**: The bridge polls one rack per second to ensure network stability. For 4 racks, a full refresh takes 4 seconds.
+## Porting to ESP32 / Olimex POE
+
+The modular structure of the Python implementation maps directly to Arduino/C++ patterns:
+
+| Python Module | ESP32 Implementation |
+| :--- | :--- |
+| `SettingsStore` | `Preferences.h` (Non-volatile storage) |
+| `DigitalLoggersClient` | `HTTPClient.h` |
+| `SequenceEngine` | C++ Class using `millis()` for non-blocking delays |
+| `StatusAggregator` | Background task or loop logic |
+| `StateManager` | Global singleton struct/class |
+| `WebApi` | `WebServer.h` (Serving JSON endpoints) |
+| `Dashboard UI` | Embedded in `PROGMEM` and served as static content |
+| `HardwareInterface` | `digitalRead/Write` for buttons and WS2811 library for LEDs |
+
+### Why Olimex ESP32-POE?
+The **Olimex ESP32-POE** is the target hardware for production because:
+1.  **Wired Reliability**: Avoids Wi-Fi congestion in dense AV racks.
+2.  **Power over Ethernet**: No separate power supply needed for the bridge.
+3.  **Stability**: The modular architecture ensures the web server remains responsive even if a rack unit is slow or offline.
 
 ---
-*Note: This is a public repository. Never commit your private Wi-Fi credentials or internal rack IP addresses.*
+*Note: This is a refactored version focusing on long-term stability and hardware portability. Privacy is preserved by using placeholders and local settings files.*
