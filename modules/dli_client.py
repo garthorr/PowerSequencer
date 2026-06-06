@@ -1,48 +1,60 @@
-import random
 import requests
 
 class DigitalLoggersClient:
-    def __init__(self, user="admin", password="1234", demo_mode=False):
+    def __init__(self, user="admin", password="1234"):
         self.user = user
         self.password = password
-        self.demo_mode = demo_mode
         self.auth = (user, password)
+        self.working_endpoints = {}
 
     def get_status(self, ip):
-        if self.demo_mode:
-            return {
-                "state": random.choice(["on", "off"]),
-                "amps": round(random.uniform(0.5, 4.5), 2),
-                "online": True
-            }
-
+        status = {"online": False, "outlets": [], "state": "unknown", "amps": 0.0}
         try:
-            # Polling outlets for state
+            # 1. Fetch Outlet States
             r = requests.get(f"http://{ip}/restapi/relay/outlets/", auth=self.auth, timeout=2)
-            if r.status_code != 200: return {"online": False}
+            if r.status_code == 200:
+                data = r.json()
+                status["online"] = True
+                status["outlets"] = [{"name": o.get("name", f"Outlet {i+1}"), "state": o.get("state", False)} for i, o in enumerate(data)]
+                any_on = any(o["state"] for o in status["outlets"])
+                any_off = any(not o["state"] for o in status["outlets"])
+                status["state"] = "mixed" if any_on and any_off else ("on" if any_on else "off")
+            else:
+                return status
 
-            data = r.json()
-            any_on = any(o.get("state") for o in data)
-            any_off = any(not o.get("state") for o in data)
-            state = "mixed" if any_on and any_off else ("on" if any_on else "off")
-
-            # Polling current
+            # 2. Fetch Amperage (with endpoint fallback)
             amps = 0.0
-            r_amps = requests.get(f"http://{ip}/restapi/relay/amps/", auth=self.auth, timeout=2)
-            if r_amps.status_code == 200:
-                amps = float(r_amps.text)
+            found_amps = False
+            endpoints = ["/restapi/relay/amps/", "/restapi/relay/current/", "/amps"]
 
-            return {"state": state, "amps": amps, "online": True}
+            cached = self.working_endpoints.get(ip)
+            if cached:
+                try:
+                    r_amps = requests.get(f"http://{ip}{cached}", auth=self.auth, timeout=1)
+                    if r_amps.status_code == 200:
+                        amps = float(r_amps.text)
+                        found_amps = True
+                except Exception: pass
+
+            if not found_amps:
+                for ep in endpoints:
+                    try:
+                        r_amps = requests.get(f"http://{ip}{ep}", auth=self.auth, timeout=1)
+                        if r_amps.status_code == 200:
+                            amps = float(r_amps.text)
+                            self.working_endpoints[ip] = ep
+                            found_amps = True
+                            break
+                    except Exception: continue
+
+            status["amps"] = amps
+            return status
         except Exception:
-            return {"online": False}
+            return status
 
     def send_command(self, ip, command):
-        # command is "ON" or "OFF"
-        if self.demo_mode:
-            print(f"[DEMO] Sending {command} to {ip}")
-            return True
-
         try:
+            # Using the 'a' batch command for speed and reliability
             r = requests.get(f"http://{ip}/outlet?a={command.upper()}", auth=self.auth, timeout=5)
             return r.status_code == 200
         except Exception:
