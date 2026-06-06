@@ -1,4 +1,4 @@
-# PowerSequencer
+# PowerSequencer Master Bridge
 
 PowerSequencer is a master control bridge for Digital Loggers Web Power Switch units. It allows a single operator to manage multiple AV racks, providing synchronized power sequencing and aggregate telemetry monitoring.
 
