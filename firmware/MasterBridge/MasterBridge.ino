@@ -76,6 +76,36 @@ void setup() {
   server.on("/save_config", HTTP_POST, handleSaveConfig);
   server.on("/on", HTTP_GET, []() { applyCommandSequentially("ON"); server.send(200, "application/json", "{\"success\":true}"); });
   server.on("/off", HTTP_GET, []() { applyCommandSequentially("OFF"); server.send(200, "application/json", "{\"success\":true}"); });
+
+  // Independent Rack Control
+  server.on(UriBraces("/rack/{}/{}"), HTTP_GET, []() {
+    int index = server.pathArg(0).toInt();
+    String cmd = server.pathArg(1);
+    if (index >= 0 && index < stripCount) {
+      bool success = sendBatchCommand(powerStrips[index].ip, cmd.equalsIgnoreCase("on") ? "ON" : "OFF");
+      server.send(success ? 200 : 502, "application/json", "{\"success\":" + String(success ? "true" : "false") + "}");
+      pollStrip(powerStrips[index]);
+    } else { server.send(404); }
+  });
+
+  // Outlet Renaming
+  server.on(UriBraces("/rack/{}/outlet/{}/rename"), HTTP_POST, []() {
+    int index = server.pathArg(0).toInt();
+    int oid = server.pathArg(1).toInt();
+    StaticJsonDocument<256> doc;
+    deserializeJson(doc, server.arg("plain"));
+    String newName = doc["name"].as<String>();
+    if (index >= 0 && index < stripCount && newName.length() > 0) {
+      HTTPClient http;
+      http.begin("http://" + powerStrips[index].ip + "/restapi/relay/outlets/" + String(oid) + "/name/");
+      http.setAuthorization(DLI_USER, DLI_PASS);
+      int code = http.PUT("{\"value\":\"" + newName + "\"}");
+      http.end();
+      server.send(code == 200 || code == 204 ? 200 : 502);
+      pollStrip(powerStrips[index]);
+    } else { server.send(400); }
+  });
+
   server.begin();
   Serial.println("\nReady.");
 }
@@ -84,7 +114,6 @@ void loop() {
   server.handleClient();
   static unsigned long lastPoll = 0;
   static uint8_t currentStrip = 0;
-
   if (stripCount > 0 && millis() - lastPoll >= POLL_INTERVAL_MS) {
     lastPoll = millis();
     if (globalState != SystemState::Sequencing) {
@@ -94,7 +123,6 @@ void loop() {
     }
   }
   updateStateIndicator();
-
   if (digitalRead(BUTTON_PIN) == LOW) {
     delay(50);
     if (digitalRead(BUTTON_PIN) == LOW) {

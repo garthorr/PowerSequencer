@@ -22,7 +22,7 @@ class DigitalLoggersClient:
             else:
                 return status
 
-            # 2. Fetch Amperage (with endpoint fallback)
+            # 2. Fetch Amperage
             amps = 0.0
             found_amps = False
             endpoints = ["/restapi/relay/amps/", "/restapi/relay/current/", "/amps"]
@@ -54,8 +54,18 @@ class DigitalLoggersClient:
 
     def send_command(self, ip, command):
         try:
-            # Using the 'a' batch command for speed and reliability
             r = requests.get(f"http://{ip}/outlet?a={command.upper()}", auth=self.auth, timeout=5)
             return r.status_code == 200
+        except Exception:
+            return False
+
+    def set_outlet_name(self, ip, index, name):
+        try:
+            # DLI REST API typically uses PUT for setting values.
+            # Index is 0-based in our system, but DLI might be 0-based in restapi too.
+            url = f"http://{ip}/restapi/relay/outlets/{index}/name/"
+            # Some DLI versions require X-CSRF header for PUT
+            r = requests.put(url, auth=self.auth, data={"value": name}, headers={"X-CSRF": "x"}, timeout=5)
+            return r.status_code == 200 or r.status_code == 204
         except Exception:
             return False

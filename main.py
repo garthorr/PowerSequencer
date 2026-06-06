@@ -5,7 +5,6 @@ from core.sequence_engine import SequenceEngine
 from core.status_aggregator import StatusAggregator
 from modules.dli_client import DigitalLoggersClient
 import time
-import os
 
 app = Flask(__name__)
 
@@ -36,6 +35,25 @@ def sequence_on():
 def sequence_off():
     sequence_engine.trigger_sequence("OFF")
     return jsonify({"success": True})
+
+@app.route("/rack/<int:index>/<cmd>")
+def rack_control(index, cmd):
+    racks = settings.get_racks()
+    if 0 <= index < len(racks):
+        success = dli.send_command(racks[index]["ip"], cmd.upper())
+        state_manager.refresh_all()
+        return jsonify({"success": success})
+    return jsonify({"success": False}), 404
+
+@app.route("/rack/<int:index>/outlet/<int:oid>/rename", methods=["POST"])
+def rename_outlet(index, oid):
+    racks = settings.get_racks()
+    name = request.json.get("name")
+    if 0 <= index < len(racks) and name:
+        success = dli.set_outlet_name(racks[index]["ip"], oid, name)
+        state_manager.refresh_all()
+        return jsonify({"success": success})
+    return jsonify({"success": False}), 400
 
 @app.route("/save_config", methods=["POST"])
 def save_config():
