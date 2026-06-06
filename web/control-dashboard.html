@@ -101,7 +101,7 @@
         gap: 1rem;
       }
 
-      button {
+      button, .btn-link {
         padding: 0.75rem 1rem;
         border-radius: 0.5rem;
         border: none;
@@ -109,6 +109,8 @@
         cursor: pointer;
         font-size: 1rem;
         transition: opacity 0.2s;
+        text-decoration: none;
+        text-align: center;
       }
 
       button:active { transform: scale(0.98); }
@@ -130,23 +132,37 @@
         border-radius: 0.75rem;
         padding: 1rem;
         background: color-mix(in srgb, var(--accent) 3%, transparent);
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
       }
 
       .strip-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        cursor: pointer;
       }
+
+      .strip-info { flex: 1; cursor: pointer; }
 
       .rack-title { font-weight: bold; }
       .amps { font-weight: bold; color: var(--accent); }
 
+      .rack-controls {
+        display: flex;
+        gap: 0.4rem;
+        align-items: center;
+      }
+      .rack-controls button, .rack-controls .btn-link {
+        padding: 0.3rem 0.6rem;
+        font-size: 0.7rem;
+      }
+
       .outlets-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
         gap: 0.5rem;
-        margin-top: 1rem;
+        margin-top: 0.5rem;
         padding-top: 1rem;
         border-top: 1px solid var(--border);
       }
@@ -158,6 +174,7 @@
         padding: 0.25rem 0.5rem;
         border-radius: 0.25rem;
         background: var(--bg);
+        cursor: pointer;
       }
 
       .dot {
@@ -279,13 +296,20 @@
             const isExpanded = expandedRacks.has(i);
 
             card.innerHTML = `
-              <div class="strip-header" onclick="toggleRack(${i})">
-                <span class="rack-title">${strip.name}</span>
-                <span class="amps">${strip.current_available ? strip.current.toFixed(2) + ' A' : 'OFFLINE'}</span>
+              <div class="strip-header">
+                <div class="strip-info" onclick="toggleRack(${i})">
+                  <span class="rack-title">${strip.name}</span>
+                  <span class="amps">${strip.current_available ? strip.current.toFixed(2) + ' A' : 'OFFLINE'}</span>
+                </div>
+                <div class="rack-controls">
+                  <a href="http://${strip.ip}" target="_blank" class="btn-link btn-ghost">🔗 Admin</a>
+                  <button class="btn-on" onclick="controlRack(${i}, 'on')">ON</button>
+                  <button class="btn-off" onclick="controlRack(${i}, 'off')">OFF</button>
+                </div>
               </div>
               <div class="outlets-grid ${isExpanded ? '' : 'hidden'}">
-                ${strip.outlets ? strip.outlets.map(o => `
-                  <div class="outlet-item">
+                ${strip.outlets ? strip.outlets.map((o, j) => `
+                  <div class="outlet-item" onclick="renameOutlet(${i}, ${j}, '${o.name}')">
                     <span><span class="dot ${o.state ? 'on' : 'off'}"></span> ${o.name}</span>
                     <span style="opacity: 0.6">${o.state ? 'ON' : 'OFF'}</span>
                   </div>
@@ -304,6 +328,28 @@
         if (expandedRacks.has(i)) expandedRacks.delete(i);
         else expandedRacks.add(i);
         update();
+      };
+
+      window.controlRack = async (i, cmd) => {
+        try {
+          await fetch(`/rack/${i}/${cmd}`);
+          setTimeout(update, 500);
+        } catch (e) { alert('Rack control failed'); }
+      };
+
+      window.renameOutlet = async (rackIdx, outletIdx, currentName) => {
+        const newName = prompt(`Enter new name for "${currentName}":`, currentName);
+        if (newName && newName !== currentName) {
+          try {
+            const res = await fetch(`/rack/${rackIdx}/outlet/${outletIdx}/rename`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: newName })
+            });
+            if (res.ok) update();
+            else alert('Rename failed');
+          } catch (e) { alert('Connection error during rename'); }
+        }
       };
 
       async function send(cmd) {
