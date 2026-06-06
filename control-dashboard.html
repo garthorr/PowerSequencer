@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Power Sequencer Dashboard</title>
+    <title>Power Sequencer</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -48,8 +48,9 @@
         gap: 2rem;
       }
 
-      header { text-align: center; }
-      h1 { margin: 0; font-size: 2rem; }
+      header { text-align: center; width: 100%; max-width: 600px; display: flex; justify-content: space-between; align-items: center; }
+      h1 { margin: 0; font-size: 1.5rem; }
+
       .main-card {
         background: var(--card-bg);
         border: 1px solid var(--border);
@@ -62,6 +63,8 @@
         flex-direction: column;
         gap: 1.5rem;
       }
+
+      .hidden { display: none !important; }
 
       .status-banner {
         display: flex;
@@ -98,18 +101,21 @@
       }
 
       button {
-        padding: 1rem;
+        padding: 0.75rem 1rem;
         border-radius: 0.5rem;
         border: none;
         font-weight: bold;
         cursor: pointer;
         font-size: 1rem;
-        transition: transform 0.1s;
+        transition: opacity 0.2s;
       }
 
       button:active { transform: scale(0.98); }
       .btn-on { background: var(--on); color: white; }
       .btn-off { background: var(--off); color: white; }
+      .btn-ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+      .btn-primary { background: var(--accent); color: white; }
+      .btn-danger { background: var(--off); color: white; }
       button:disabled { opacity: 0.5; cursor: not-allowed; }
 
       .strips-list {
@@ -128,16 +134,40 @@
       .strip-item:last-child { border-bottom: none; }
       .amps { font-weight: bold; color: var(--accent); }
 
-      footer { color: var(--muted); font-size: 0.875rem; }
+      /* Settings Styles */
+      .settings-row {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        margin-bottom: 0.75rem;
+      }
+      .settings-row input {
+        flex: 1;
+        padding: 0.5rem;
+        border-radius: 0.25rem;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
+        min-width: 0;
+      }
+      .settings-actions {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-top: 1rem;
+      }
+
+      footer { color: var(--muted); font-size: 0.875rem; text-align: center; }
     </style>
   </head>
   <body>
     <header>
       <h1>Power Sequencer</h1>
-      <p>Master Control Bridge</p>
+      <button id="btn-settings-toggle" class="btn-ghost" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">⚙ Settings</button>
     </header>
 
-    <main class="main-card">
+    <!-- Main Control View -->
+    <main id="view-main" class="main-card">
       <div class="status-banner">
         <span>System Status</span>
         <span id="system-state" class="state-badge" data-state="off">OFF</span>
@@ -153,9 +183,22 @@
           <strong>Total Load</strong>
           <span id="total-amps" class="amps">-- A</span>
         </div>
-        <div id="strips-container" class="strips-list">
-          <!-- Strips added here -->
-        </div>
+        <div id="strips-container" class="strips-list"></div>
+      </div>
+    </main>
+
+    <!-- Settings View -->
+    <main id="view-settings" class="main-card hidden">
+      <h3>Rack Configuration</h3>
+      <p style="font-size: 0.85rem; color: var(--muted); margin-bottom: 1.5rem;">Manage your power strips. Max 8 racks supported.</p>
+
+      <div id="config-list"></div>
+
+      <button id="btn-add-rack" class="btn-ghost" style="width: 100%; margin-top: 0.5rem;">+ Add Rack</button>
+
+      <div class="settings-actions">
+        <button id="btn-config-cancel" class="btn-ghost">Cancel</button>
+        <button id="btn-config-save" class="btn-primary">Save & Reboot</button>
       </div>
     </main>
 
@@ -167,6 +210,14 @@
       const container = document.getElementById('strips-container');
       const btnOn = document.getElementById('btn-on');
       const btnOff = document.getElementById('btn-off');
+
+      const viewMain = document.getElementById('view-main');
+      const viewSettings = document.getElementById('view-settings');
+      const btnSettingsToggle = document.getElementById('btn-settings-toggle');
+      const configList = document.getElementById('config-list');
+      const btnAddRack = document.getElementById('btn-add-rack');
+
+      let currentConfig = [];
 
       async function update() {
         try {
@@ -183,6 +234,8 @@
           totalEl.textContent = data.total_current.toFixed(2) + ' A';
 
           container.innerHTML = '';
+          currentConfig = data.strips.map(s => ({ name: s.name, ip: s.ip }));
+
           data.strips.forEach(strip => {
             const div = document.createElement('div');
             div.className = 'strip-item';
@@ -211,6 +264,68 @@
           update();
         }
       }
+
+      btnSettingsToggle.onclick = () => {
+        if (viewSettings.classList.contains('hidden')) {
+          renderSettings();
+          viewMain.classList.add('hidden');
+          viewSettings.classList.remove('hidden');
+          btnSettingsToggle.textContent = '✕ Close';
+        } else {
+          viewMain.classList.remove('hidden');
+          viewSettings.classList.add('hidden');
+          btnSettingsToggle.textContent = '⚙ Settings';
+        }
+      };
+
+      function renderSettings() {
+        configList.innerHTML = '';
+        currentConfig.forEach((strip, i) => {
+          const div = document.createElement('div');
+          div.className = 'settings-row';
+          div.innerHTML = `
+            <input type="text" value="${strip.name}" placeholder="Name" onchange="currentConfig[${i}].name=this.value">
+            <input type="text" value="${strip.ip}" placeholder="IP" onchange="currentConfig[${i}].ip=this.value">
+            <button class="btn-danger" style="padding: 0.5rem;" onclick="removeRack(${i})">✕</button>
+          `;
+          configList.appendChild(div);
+        });
+        btnAddRack.disabled = currentConfig.length >= 8;
+      }
+
+      function removeRack(i) {
+        currentConfig.splice(i, 1);
+        renderSettings();
+      }
+
+      btnAddRack.onclick = () => {
+        if (currentConfig.length < 8) {
+          currentConfig.push({ name: '', ip: '' });
+          renderSettings();
+        }
+      };
+
+      document.getElementById('btn-config-cancel').onclick = () => btnSettingsToggle.click();
+
+      document.getElementById('btn-config-save').onclick = async () => {
+        if (confirm('Save settings and reboot bridge?')) {
+          try {
+            const res = await fetch('/save_config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(currentConfig)
+            });
+            if (res.ok) {
+              alert('Settings saved. Bridge is rebooting...');
+              setTimeout(() => location.reload(), 2000);
+            } else {
+              alert('Error saving settings.');
+            }
+          } catch (e) {
+            alert('Failed to connect to bridge.');
+          }
+        }
+      };
 
       btnOn.onclick = () => send('on');
       btnOff.onclick = () => send('off');
