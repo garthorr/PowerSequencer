@@ -1,4 +1,5 @@
 import requests
+import json
 
 class DigitalLoggersClient:
     def __init__(self, user="admin", password="1234"):
@@ -23,16 +24,37 @@ class DigitalLoggersClient:
                 return status
 
             # 2. Fetch Amperage
+            # We will try multiple keys if it's JSON, or direct text if not
             amps = 0.0
             found_amps = False
-            endpoints = ["/restapi/relay/amps/", "/restapi/relay/current/", "/amps"]
+            endpoints = ["/restapi/relay/amps/", "/restapi/relay/current/", "/restapi/relay/status/", "/amps"]
+
+            # Helper to extract from various formats
+            def extract(text):
+                try:
+                    # Case 1: Plain number
+                    return float(text.strip())
+                except ValueError:
+                    try:
+                        # Case 2: JSON object
+                        data = json.loads(text)
+                        if isinstance(data, dict):
+                            # Try common keys
+                            for k in ["value", "amps", "current", "reading"]:
+                                if k in data: return float(data[k])
+                        elif isinstance(data, list):
+                            # Some APIs return an array of values
+                            return float(data[0])
+                    except: pass
+                return None
 
             cached = self.working_endpoints.get(ip)
             if cached:
                 try:
                     r_amps = requests.get(f"http://{ip}{cached}", auth=self.auth, timeout=1)
-                    if r_amps.status_code == 200:
-                        amps = float(r_amps.text)
+                    val = extract(r_amps.text)
+                    if val is not None:
+                        amps = val
                         found_amps = True
                 except Exception: pass
 
@@ -41,10 +63,12 @@ class DigitalLoggersClient:
                     try:
                         r_amps = requests.get(f"http://{ip}{ep}", auth=self.auth, timeout=1)
                         if r_amps.status_code == 200:
-                            amps = float(r_amps.text)
-                            self.working_endpoints[ip] = ep
-                            found_amps = True
-                            break
+                            val = extract(r_amps.text)
+                            if val is not None:
+                                amps = val
+                                self.working_endpoints[ip] = ep
+                                found_amps = True
+                                break
                     except Exception: continue
 
             status["amps"] = amps
@@ -61,11 +85,8 @@ class DigitalLoggersClient:
 
     def set_outlet_name(self, ip, index, name):
         try:
-            # DLI REST API typically uses PUT for setting values.
-            # Index is 0-based in our system, but DLI might be 0-based in restapi too.
             url = f"http://{ip}/restapi/relay/outlets/{index}/name/"
-            # Some DLI versions require X-CSRF header for PUT
             r = requests.put(url, auth=self.auth, data={"value": name}, headers={"X-CSRF": "x"}, timeout=5)
-            return r.status_code == 200 or r.status_code == 204
+            return r.status_code in [200, 204]
         except Exception:
             return False

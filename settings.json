@@ -1,0 +1,1 @@
+{"racks": [{"name": "Amp Test", "ip": "localhost:8011"}], "sequence_delay_ms": 500, "poll_interval_ms": 1000}

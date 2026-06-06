@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <WebServer.h>
+#include <uri/UriBraces.h>
 #include <Preferences.h>
 
 #include "Config.h"

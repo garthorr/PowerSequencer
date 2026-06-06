@@ -5,6 +5,32 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
+float extractAmps(String payload) {
+  payload.trim();
+  if (payload.length() == 0) return 0.0;
+
+  // Try plain float first
+  if (isdigit(payload[0]) || payload[0] == '-') {
+    char* endptr;
+    float val = strtof(payload.c_str(), &endptr);
+    if (*endptr == '\0' || isspace(*endptr)) return val;
+  }
+
+  // Try parsing as JSON
+  StaticJsonDocument<512> doc;
+  if (!deserializeJson(doc, payload)) {
+    if (doc.is<float>() || doc.is<int>()) return doc.as<float>();
+    if (doc.is<JsonObject>()) {
+      const char* keys[] = {"value", "amps", "current", "reading"};
+      for (const char* k : keys) {
+        if (doc.containsKey(k)) return doc[k].as<float>();
+      }
+    }
+    if (doc.is<JsonArray>()) return doc[0].as<float>();
+  }
+  return 0.0;
+}
+
 void pollStrip(PowerStrip& s) {
   HTTPClient http;
   http.setTimeout(2000);
@@ -26,19 +52,29 @@ void pollStrip(PowerStrip& s) {
   } else s.online = false;
   http.end();
 
-  const char* endpoints[] = {"/restapi/relay/amps/", "/restapi/relay/current/", "/amps"};
+  const char* endpoints[] = {"/restapi/relay/amps/", "/restapi/relay/current/", "/restapi/relay/status/", "/amps"};
   bool found = false;
   if (s.workingEndpoint.length() > 0) {
     http.begin("http://" + s.ip + s.workingEndpoint);
     http.setAuthorization(DLI_USER, DLI_PASS);
-    if (http.GET() == 200) { s.amps = http.getString().toFloat(); found = true; }
+    if (http.GET() == 200) {
+      s.amps = extractAmps(http.getString());
+      found = true;
+    }
     http.end();
   }
   if (!found) {
     for (const char* ep : endpoints) {
       http.begin("http://" + s.ip + ep);
       http.setAuthorization(DLI_USER, DLI_PASS);
-      if (http.GET() == 200) { s.amps = http.getString().toFloat(); s.workingEndpoint = ep; found = true; http.end(); break; }
+      if (http.GET() == 200) {
+        float val = extractAmps(http.getString());
+        s.amps = val;
+        s.workingEndpoint = ep;
+        found = true;
+        http.end();
+        break;
+      }
       http.end();
     }
   }
