@@ -13,8 +13,12 @@ const char* DLI_USER = "admin";
 const char* DLI_PASS = "1234";
 
 // --- Hardware ---
-#define BUTTON_PIN     12
-#define STATUS_LED_PIN 14
+#define MASTER_BUTTON_PIN 12
+#define LED_PIN           14
+#define NUM_LEDS          8  // Support up to 8 racks
+
+// Individual Rack Buttons (GPIOs 35, 36, 39 are Input Only)
+const uint8_t RACK_BUTTON_PINS[] = {35, 36, 39, 15, 4, 32, 33};
 
 // --- Timing ---
 const uint32_t SEQUENCE_DELAY_MS = 1500;
