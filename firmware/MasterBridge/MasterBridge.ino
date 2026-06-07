@@ -8,6 +8,7 @@
 #include <WebServer.h>
 #include <uri/UriBraces.h>
 #include <Preferences.h>
+#include <Adafruit_NeoPixel.h>
 
 #include "Config.h"
 #include "Types.h"
@@ -34,6 +35,7 @@ uint8_t stripCount = 0;
 WebServer server(80);
 Preferences prefs;
 SystemState globalState = SystemState::Off;
+Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // --- Prototypes ---
 void handleRoot();
@@ -57,8 +59,15 @@ void WiFiEvent(WiFiEvent_t event) {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-  pinMode(STATUS_LED_PIN, OUTPUT);
+  pinMode(MASTER_BUTTON_PIN, INPUT_PULLUP);
+  for (int i = 0; i < sizeof(RACK_BUTTON_PINS); i++) {
+    pinMode(RACK_BUTTON_PINS[i], INPUT_PULLUP);
+  }
+
+  pixels.begin();
+  pixels.setBrightness(50);
+  pixels.show();
+
   loadConfig();
 
 #if USE_ETHERNET
@@ -124,11 +133,27 @@ void loop() {
     }
   }
   updateStateIndicator();
-  if (digitalRead(BUTTON_PIN) == LOW) {
+
+  // Master Button
+  if (digitalRead(MASTER_BUTTON_PIN) == LOW) {
     delay(50);
-    if (digitalRead(BUTTON_PIN) == LOW) {
+    if (digitalRead(MASTER_BUTTON_PIN) == LOW) {
       applyCommandSequentially(globalState == SystemState::On ? "OFF" : "ON");
-      while (digitalRead(BUTTON_PIN) == LOW) { server.handleClient(); delay(10); }
+      while (digitalRead(MASTER_BUTTON_PIN) == LOW) { server.handleClient(); delay(10); }
+    }
+  }
+
+  // Individual Rack Buttons
+  for (uint8_t i = 0; i < stripCount && i < sizeof(RACK_BUTTON_PINS); i++) {
+    if (digitalRead(RACK_BUTTON_PINS[i]) == LOW) {
+      delay(50);
+      if (digitalRead(RACK_BUTTON_PINS[i]) == LOW) {
+        String cmd = (powerStrips[i].state == StripState::On) ? "OFF" : "ON";
+        sendBatchCommand(powerStrips[i].ip, cmd);
+        pollStrip(powerStrips[i]);
+        globalState = calculateGlobalState();
+        while (digitalRead(RACK_BUTTON_PINS[i]) == LOW) { server.handleClient(); delay(10); }
+      }
     }
   }
 }
@@ -224,12 +249,31 @@ bool applyCommandSequentially(const String& command) {
 }
 
 void updateStateIndicator() {
-  static unsigned long lastToggle = 0; static bool ledState = false;
-  switch (globalState) {
-    case SystemState::On: digitalWrite(STATUS_LED_PIN, HIGH); break;
-    case SystemState::Off: digitalWrite(STATUS_LED_PIN, LOW); break;
-    case SystemState::Sequencing: if (millis() - lastToggle >= 250) { lastToggle = millis(); ledState = !ledState; digitalWrite(STATUS_LED_PIN, ledState); } break;
-    case SystemState::Error: case SystemState::Mixed: if (millis() - lastToggle >= 100) { lastToggle = millis(); ledState = !ledState; digitalWrite(STATUS_LED_PIN, ledState); } break;
-    default: digitalWrite(STATUS_LED_PIN, LOW);
+  static unsigned long lastToggle = 0;
+  static bool flashState = false;
+  if (millis() - lastToggle >= 300) {
+    lastToggle = millis();
+    flashState = !flashState;
   }
+
+  for (uint8_t i = 0; i < NUM_LEDS; i++) {
+    if (i >= stripCount) {
+      pixels.setPixelColor(i, 0);
+      continue;
+    }
+
+    if (globalState == SystemState::Sequencing) {
+      pixels.setPixelColor(i, flashState ? pixels.Color(0, 0, 255) : 0); // Flashing Blue
+    } else if (!powerStrips[i].online) {
+      pixels.setPixelColor(i, flashState ? pixels.Color(255, 0, 0) : 0); // Flashing Red
+    } else {
+      switch (powerStrips[i].state) {
+        case StripState::On:    pixels.setPixelColor(i, pixels.Color(0, 255, 0)); break;
+        case StripState::Off:   pixels.setPixelColor(i, pixels.Color(20, 0, 0));  break; // Dim red
+        case StripState::Mixed: pixels.setPixelColor(i, pixels.Color(255, 100, 0)); break; // Orange
+        default:                pixels.setPixelColor(i, pixels.Color(10, 10, 10)); break;
+      }
+    }
+  }
+  pixels.show();
 }

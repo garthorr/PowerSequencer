@@ -20,30 +20,31 @@ This project is built on a **modular architecture** designed for high stability 
 The bridge is designed to be a reliable hardware appliance.
 
 ### Pinout
-*   **Toggle Button**: Momentary button between **IO12** and **GND**.
-*   **Status LED**: LED (with 220Ω resistor) on **IO14**.
-    *   **Solid**: System is fully ON.
-    *   **Off**: System is fully OFF.
-    *   **Pulsing**: Sequencing in progress.
-    *   **Fast Blink**: Error or Mixed state detected.
+*   **Master Button**: Momentary button between **IO12** and **GND**.
+*   **Rack Buttons**: Individual buttons for racks 1-7 on **GPIOs 35, 36, 39, 15, 4, 32, 33**.
+*   **Status LEDs (WS2811)**: Data pin on **IO14**.
+    *   **Green**: Rack is ON.
+    *   **Dim Red**: Rack is OFF.
+    *   **Orange**: Mixed outlet states.
+    *   **Flashing Blue**: Sequencing in progress.
+    *   **Flashing Red**: Rack is Offline.
 
 ---
 
-## Usage (Local Python)
+## Usage (Simulation)
 
-For testing or using a PC as the master bridge:
+For development or testing without hardware:
 
 1.  **Install Dependencies**: `pip install flask requests`
-2.  **Start Bridge**: `python3 main.py`
+2.  **Start Simulator**: `python3 tools/simulator/main.py`
 3.  **Access UI**: Open `http://localhost:8003`
-4.  **Configure**: Go to **⚙ Settings** and enter your real rack IP addresses.
 
 ---
 
 ## Firmware Deployment (ESP32)
 
 1.  Open `firmware/MasterBridge/MasterBridge.ino` in the Arduino IDE.
-2.  Install the **ArduinoJson** library.
+2.  Install the **ArduinoJson** and **Adafruit_NeoPixel** libraries.
 3.  Edit `Config.h` to set your networking mode (Wired/Wi-Fi) and credentials.
 4.  Flash to your hardware.
 
