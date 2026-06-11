@@ -25,7 +25,7 @@
 #    define ETH_MDIO_PIN  52
 #    define ETH_POWER_PIN 51
 #    define ETH_TYPE      ETH_PHY_IP101
-#    define ETH_CLK_MODE  EMAC_CLK_EXT_IN
+#    define ETH_CLK_MODE  ((eth_clock_mode_t)EMAC_CLK_EXT_IN)
 #  else
      // WT32-ETH01 / Olimex ESP32-POE: LAN8720 PHY, RMII, REF_CLK on GPIO0
 #    define ETH_ADDR      1
@@ -82,7 +82,7 @@ void setup() {
   loadConfig();
 
 #if USE_ETHERNET
-  WiFi.onEvent(WiFiEvent);
+  Network.onEvent(WiFiEvent);
   // arduino-esp32 3.x signature: (type, phy_addr, mdc, mdio, power, clock_mode)
   ETH.begin(ETH_TYPE, ETH_ADDR, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_POWER_PIN, ETH_CLK_MODE);
   unsigned long start = millis();
