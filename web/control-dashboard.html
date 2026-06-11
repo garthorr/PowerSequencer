@@ -287,7 +287,9 @@
           totalEl.textContent = data.total_current.toFixed(2) + ' A';
 
           container.innerHTML = '';
-          currentConfig = data.strips.map(s => ({ name: s.name, ip: s.ip }));
+          if (viewSettings.classList.contains('hidden')) {
+            currentConfig = data.strips.map(s => ({ name: s.name, ip: s.ip }));
+          }
 
           data.strips.forEach((strip, i) => {
             const card = document.createElement('div');
