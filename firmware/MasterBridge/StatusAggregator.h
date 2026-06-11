@@ -33,7 +33,8 @@ float extractAmps(String payload) {
 
 void pollStrip(PowerStrip& s) {
   HTTPClient http;
-  http.setTimeout(2000);
+  http.setConnectTimeout(700);
+  http.setTimeout(1500);
   http.begin("http://" + s.ip + "/restapi/relay/outlets/");
   http.setAuthorization(DLI_USER, DLI_PASS);
   if (http.GET() == 200) {
@@ -51,6 +52,9 @@ void pollStrip(PowerStrip& s) {
     } else s.online = false;
   } else s.online = false;
   http.end();
+
+  // Unreachable strip: don't burn 4 more connect timeouts probing amps endpoints.
+  if (!s.online) return;
 
   const char* endpoints[] = {"/restapi/relay/amps/", "/restapi/relay/current/", "/restapi/relay/status/", "/amps"};
   bool found = false;

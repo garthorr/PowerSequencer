@@ -20,6 +20,6 @@ struct PowerStrip {
   OutletStatus outlets[8];
 };
 
-enum class SystemState : uint8_t { Off, On, Mixed, Error, Sequencing };
+enum class SystemState : uint8_t { Off, On, Mixed, Error, Sequencing, Updating };
 
 #endif

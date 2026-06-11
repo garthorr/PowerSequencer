@@ -6,6 +6,7 @@
 
 bool sendBatchCommand(const String& ip, const String& command) {
   HTTPClient http;
+  http.setConnectTimeout(1000);
   http.setTimeout(5000);
   http.begin("http://" + ip + "/outlet?a=" + command);
   http.setAuthorization(DLI_USER, DLI_PASS);
