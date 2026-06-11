@@ -17,6 +17,9 @@ struct PowerStrip {
   StripState state;
   float amps;
   bool online;
+  String lastError;       // why the last poll failed (empty when online)
+  String ampsDebug;       // endpoint + raw payload behind the amps reading
+  bool ampsProbeLogged;   // probe results logged since the strip came online
   OutletStatus outlets[8];
 };
 

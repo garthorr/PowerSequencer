@@ -210,7 +210,15 @@
         margin-top: 1rem;
       }
 
+      .diag {
+        font-size: 0.7rem;
+        color: var(--muted);
+        word-break: break-all;
+      }
+      .diag.err { color: var(--error); }
+
       footer { color: var(--muted); font-size: 0.875rem; text-align: center; }
+      footer a { color: var(--accent); }
     </style>
   </head>
   <body>
@@ -254,7 +262,7 @@
       </div>
     </main>
 
-    <footer>Refreshes every 2 seconds</footer>
+    <footer>Refreshes every 2 seconds &middot; <a href="/log" target="_blank">Debug log</a></footer>
 
     <script>
       const stateEl = document.getElementById('system-state');
@@ -272,6 +280,9 @@
       let currentConfig = [];
       let expandedRacks = new Set();
       let lastStatusText = '';
+
+      // Diagnostic strings can contain raw HTTP payload snippets.
+      const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
       async function update(force = false) {
         try {
@@ -314,6 +325,7 @@
                   <button class="btn-off" onclick="controlRack(${i}, 'off')">OFF</button>
                 </div>
               </div>
+              ${!strip.current_available && strip.last_error ? `<div class="diag err">⚠ ${esc(strip.last_error)}</div>` : ''}
               <div class="outlets-grid ${isExpanded ? '' : 'hidden'}">
                 ${strip.outlets ? strip.outlets.map((o, j) => `
                   <div class="outlet-item" onclick="renameOutlet(${i}, ${j}, '${o.name}')">
@@ -322,6 +334,7 @@
                   </div>
                 `).join('') : '<p style="font-size: 0.7rem; opacity: 0.5;">No outlet telemetry</p>'}
               </div>
+              ${isExpanded && strip.amps_debug ? `<div class="diag">Current sensor: ${esc(strip.amps_debug)}</div>` : ''}
             `;
             container.appendChild(card);
           });

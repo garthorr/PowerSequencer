@@ -16,6 +16,7 @@
 
 #include "Config.h"
 #include "Types.h"
+#include "DiagLog.h"
 #include "Dashboard.h"
 #include "StatusAggregator.h"
 #include "SequenceEngine.h"
@@ -50,6 +51,7 @@ uint8_t stripCount = 0;
 WebServer server(80);
 Preferences prefs;
 volatile SystemState globalState = SystemState::Off;
+const char* SYS_STATE_NAMES[] = {"off", "on", "mixed", "error", "sequencing", "updating"};
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // --- Async command processing ---
@@ -74,6 +76,7 @@ void handleSaveConfig();
 void handleButtons();
 void updateStateIndicator();
 void enqueueCommand(const Command& cmd);
+void applyGlobalState(SystemState next);
 SystemState calculateGlobalState();
 void loadConfig();
 void networkTask(void* arg);
@@ -89,8 +92,25 @@ void WiFiEvent(arduino_event_id_t event) {
 }
 #endif
 
+// Why did the device boot? An unexpected reset wipes status and the log,
+// so record it as the first log entry.
+const char* resetReasonStr() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "power-on";
+    case ESP_RST_SW:        return "software restart";
+    case ESP_RST_PANIC:     return "crash (panic)";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:       return "watchdog reset";
+    case ESP_RST_BROWNOUT:  return "brownout (power dip)";
+    default:                return "other";
+  }
+}
+
 void setup() {
   Serial.begin(115200);
+  DiagLog.begin();
+  DiagLog.log(String("Boot, reset reason: ") + resetReasonStr());
   pinMode(MASTER_BUTTON_PIN, INPUT_PULLUP);
   for (int i = 0; i < sizeof(RACK_BUTTON_PINS); i++) {
     pinMode(RACK_BUTTON_PINS[i], INPUT_PULLUP);
@@ -112,11 +132,14 @@ void setup() {
   ETH.begin(ETH_TYPE, ETH_ADDR, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_POWER_PIN, ETH_CLK_MODE);
   unsigned long start = millis();
   while (!eth_connected && millis() - start < 10000) { delay(500); Serial.print("."); }
+  DiagLog.log(eth_connected ? "Ethernet up, IP: " + ETH.localIP().toString()
+                            : "Ethernet NOT connected after 10s");
 #else
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(OTA_HOSTNAME);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  DiagLog.log("WiFi up, IP: " + WiFi.localIP().toString());
 #endif
 
   ArduinoOTA.setHostname(OTA_HOSTNAME);
@@ -124,18 +147,24 @@ void setup() {
   ArduinoOTA.onStart([]() {
     otaInProgress = true;
     globalState = SystemState::Updating;
+    DiagLog.log("OTA update started");
   });
   ArduinoOTA.onEnd([]() { otaInProgress = false; });
   ArduinoOTA.onError([](ota_error_t error) {
     otaInProgress = false;
+    DiagLog.log("OTA update FAILED, error " + String((int)error));
     xSemaphoreTake(stateMutex, portMAX_DELAY);
-    globalState = calculateGlobalState();
+    applyGlobalState(calculateGlobalState());
     xSemaphoreGive(stateMutex);
   });
   ArduinoOTA.begin();
 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
+  server.on("/log", HTTP_GET, []() {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "text/plain", DiagLog.dump());
+  });
   server.on("/save_config", HTTP_POST, handleSaveConfig);
   server.on("/on", HTTP_GET, []() { enqueueCommand({CmdType::SequenceAll, 0, true}); server.send(200, "application/json", "{\"success\":true}"); });
   server.on("/off", HTTP_GET, []() { enqueueCommand({CmdType::SequenceAll, 0, false}); server.send(200, "application/json", "{\"success\":true}"); });
@@ -196,9 +225,31 @@ void loop() {
 }
 
 void enqueueCommand(const Command& cmd) {
-  // Immediate UI feedback; the task recalculates when done.
-  if (cmd.type == CmdType::SequenceAll) globalState = SystemState::Sequencing;
+  if (cmd.type == CmdType::SequenceAll) {
+    DiagLog.log(String("Command queued: sequence all ") + (cmd.turnOn ? "ON" : "OFF"));
+    // Immediate UI feedback; the task recalculates when done.
+    globalState = SystemState::Sequencing;
+  } else {
+    DiagLog.log("Command queued: rack " + String(cmd.rackIndex) + (cmd.turnOn ? " ON" : " OFF"));
+  }
   xQueueSend(cmdQueue, &cmd, 0);
+}
+
+// Caller must hold stateMutex. Logs transitions, with the per-rack failure
+// reasons when entering the error state, so /log explains every flip.
+void applyGlobalState(SystemState next) {
+  if (next == globalState) return;
+  String msg = String("Global state: ") + SYS_STATE_NAMES[(uint8_t)globalState] +
+               " -> " + SYS_STATE_NAMES[(uint8_t)next];
+  if (next == SystemState::Error) {
+    for (uint8_t i = 0; i < stripCount; i++) {
+      if (!powerStrips[i].online) {
+        msg += " | '" + powerStrips[i].name + "' offline: " + powerStrips[i].lastError;
+      }
+    }
+  }
+  globalState = next;
+  DiagLog.log(msg);
 }
 
 // Reads a strip's address fields, polls it without holding the lock,
@@ -215,9 +266,12 @@ void pollStripSafe(uint8_t i) {
   powerStrips[i].state = tmp.state;
   powerStrips[i].amps = tmp.amps;
   powerStrips[i].online = tmp.online;
+  powerStrips[i].lastError = tmp.lastError;
+  powerStrips[i].ampsDebug = tmp.ampsDebug;
+  powerStrips[i].ampsProbeLogged = tmp.ampsProbeLogged;
   for (int j = 0; j < 8; j++) powerStrips[i].outlets[j] = tmp.outlets[j];
   // Keep showing Sequencing while commands are still queued.
-  if (uxQueueMessagesWaiting(cmdQueue) == 0) globalState = calculateGlobalState();
+  if (uxQueueMessagesWaiting(cmdQueue) == 0) applyGlobalState(calculateGlobalState());
   xSemaphoreGive(stateMutex);
 }
 
@@ -335,9 +389,8 @@ SystemState calculateGlobalState() {
 }
 
 void handleStatus() {
-  DynamicJsonDocument doc(4096);
-  const char* sysStrs[] = {"off", "on", "mixed", "error", "sequencing", "updating"};
-  doc["power"] = sysStrs[(uint8_t)globalState];
+  DynamicJsonDocument doc(6144);
+  doc["power"] = SYS_STATE_NAMES[(uint8_t)globalState];
   JsonArray strips = doc.createNestedArray("strips");
   float totalCurrent = 0;
   xSemaphoreTake(stateMutex, portMAX_DELAY);
@@ -345,6 +398,8 @@ void handleStatus() {
     JsonObject s = strips.createNestedObject();
     s["name"] = powerStrips[i].name; s["ip"] = powerStrips[i].ip;
     s["current"] = powerStrips[i].amps; s["current_available"] = powerStrips[i].online;
+    s["last_error"] = powerStrips[i].lastError;
+    s["amps_debug"] = powerStrips[i].ampsDebug;
     if (powerStrips[i].online) totalCurrent += powerStrips[i].amps;
     JsonArray o_arr = s.createNestedArray("outlets");
     for (int j=0; j<8; j++) {
