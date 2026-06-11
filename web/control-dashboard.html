@@ -256,6 +256,24 @@
 
       <button id="btn-add-rack" class="btn-ghost" style="width: 100%; margin-top: 0.5rem;">+ Add Rack</button>
 
+      <div id="pins-block" class="hidden">
+        <h3 style="margin-top: 2rem;">Hardware Pins</h3>
+        <p style="font-size: 0.85rem; color: var(--muted); margin-bottom: 1rem;">GPIO numbers for the buttons and LED data line. Saving restarts the bridge.</p>
+        <div class="settings-row">
+          <span style="width: 110px; font-size: 0.85rem;">Master button</span>
+          <input id="pin-master" type="number" min="0" max="54">
+        </div>
+        <div class="settings-row">
+          <span style="width: 110px; font-size: 0.85rem;">LED data</span>
+          <input id="pin-led" type="number" min="0" max="54">
+        </div>
+        <div class="settings-row">
+          <span style="width: 110px; font-size: 0.85rem;">Rack buttons</span>
+          <input id="pin-rack" type="text" placeholder="e.g. 16,17,18,19">
+        </div>
+        <button id="btn-pins-save" class="btn-primary" style="width: 100%;">Save Pins &amp; Restart</button>
+      </div>
+
       <div class="settings-actions">
         <button id="btn-config-cancel" class="btn-ghost">Cancel</button>
         <button id="btn-config-save" class="btn-primary">Save Changes</button>
@@ -278,6 +296,7 @@
       const btnAddRack = document.getElementById('btn-add-rack');
 
       let currentConfig = [];
+      let currentPins = null;
       let expandedRacks = new Set();
       let lastStatusText = '';
 
@@ -305,6 +324,7 @@
           container.innerHTML = '';
           if (viewSettings.classList.contains('hidden')) {
             currentConfig = data.strips.map(s => ({ name: s.name, ip: s.ip }));
+            currentPins = data.pins || null;
           }
 
           data.strips.forEach((strip, i) => {
@@ -412,6 +432,17 @@
           configList.appendChild(div);
         });
         btnAddRack.disabled = currentConfig.length >= 8;
+
+        // Pin editing is firmware-only; the simulator doesn't report pins.
+        const pinsBlock = document.getElementById('pins-block');
+        if (currentPins) {
+          pinsBlock.classList.remove('hidden');
+          document.getElementById('pin-master').value = currentPins.master;
+          document.getElementById('pin-led').value = currentPins.led;
+          document.getElementById('pin-rack').value = currentPins.rack.join(',');
+        } else {
+          pinsBlock.classList.add('hidden');
+        }
       }
 
       function removeRack(i) {
@@ -446,6 +477,32 @@
           } catch (e) {
             alert('Failed to connect to bridge.');
           }
+        }
+      };
+
+      document.getElementById('btn-pins-save').onclick = async () => {
+        const master = parseInt(document.getElementById('pin-master').value);
+        const led = parseInt(document.getElementById('pin-led').value);
+        const rack = document.getElementById('pin-rack').value
+          .split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+        if (isNaN(master) || isNaN(led) || rack.length === 0) {
+          alert('Enter valid GPIO numbers (rack buttons comma-separated).');
+          return;
+        }
+        if (confirm('Save pin configuration and restart the bridge?')) {
+          try {
+            const res = await fetch('/save_pins', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ master, led, rack })
+            });
+            if (res.ok) {
+              alert('Pins saved. The bridge is restarting.');
+              btnSettingsToggle.click();
+            } else {
+              alert('Error saving pins: ' + await res.text());
+            }
+          } catch (e) { alert('Failed to connect to bridge.'); }
         }
       };
 

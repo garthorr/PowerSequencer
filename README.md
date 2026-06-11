@@ -29,6 +29,8 @@ The classic-ESP32 pins above don't exist on the P4 header, so this board uses it
 *   **Master Button**: Momentary button between **GPIO15** and **GND**.
 *   **Rack Buttons**: Individual buttons for racks 1-7 on **GPIOs 16, 17, 18, 19, 20, 21, 22**.
 *   **Status LEDs (NeoPixel/WS281x)**: Data pin on **GPIO14**.
+
+All pin assignments above are just the firmware defaults — they can be changed at runtime from the dashboard under **Settings → Hardware Pins** (stored in flash, survives reflashes).
     *   **Green**: Rack is ON.
     *   **Dim Red**: Rack is OFF.
     *   **Orange**: Mixed outlet states.
