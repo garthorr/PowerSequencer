@@ -254,7 +254,7 @@
       </div>
     </main>
 
-    <footer>Refreshes every 5 seconds</footer>
+    <footer>Refreshes every 2 seconds</footer>
 
     <script>
       const stateEl = document.getElementById('system-state');
@@ -271,11 +271,16 @@
 
       let currentConfig = [];
       let expandedRacks = new Set();
+      let lastStatusText = '';
 
-      async function update() {
+      async function update(force = false) {
         try {
           const res = await fetch('/status');
-          const data = await res.json();
+          const text = await res.text();
+          // Skip the DOM rebuild when nothing changed — keeps clicks reliable.
+          if (!force && text === lastStatusText) return;
+          lastStatusText = text;
+          const data = JSON.parse(text);
 
           stateEl.textContent = data.power.toUpperCase();
           stateEl.dataset.state = data.power;
@@ -329,13 +334,13 @@
       window.toggleRack = (i) => {
         if (expandedRacks.has(i)) expandedRacks.delete(i);
         else expandedRacks.add(i);
-        update();
+        update(true);
       };
 
       window.controlRack = async (i, cmd) => {
         try {
           await fetch(`/rack/${i}/${cmd}`);
-          setTimeout(update, 500);
+          setTimeout(() => update(true), 500);
         } catch (e) { alert('Rack control failed'); }
       };
 
@@ -348,7 +353,7 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ name: newName })
             });
-            if (res.ok) update();
+            if (res.ok) update(true);
             else alert('Rename failed');
           } catch (e) { alert('Connection error during rename'); }
         }
@@ -361,10 +366,10 @@
           btnOn.disabled = true;
           btnOff.disabled = true;
           await fetch('/' + cmd);
-          setTimeout(update, 500);
+          setTimeout(() => update(true), 500);
         } catch (e) {
           alert('Failed to send command');
-          update();
+          update(true);
         }
       }
 
@@ -421,7 +426,7 @@
             if (res.ok) {
               alert('Settings saved.');
               btnSettingsToggle.click();
-              update();
+              update(true);
             } else {
               alert('Error saving settings.');
             }
@@ -434,7 +439,7 @@
       btnOn.onclick = () => send('on');
       btnOff.onclick = () => send('off');
 
-      setInterval(update, 5000);
+      setInterval(() => update(), 2000);
       update();
     </script>
   </body>

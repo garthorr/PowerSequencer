@@ -1,6 +1,9 @@
 /**
  * PowerSequencer Master Bridge
  * Refactored Modular Firmware for ESP32 / Olimex / WT32-ETH01
+ *
+ * All strip HTTP I/O (polling + commands) runs on a background FreeRTOS
+ * task so loop() stays free for the web server, buttons and LEDs.
  */
 
 #include <ArduinoJson.h>
@@ -45,17 +48,30 @@ PowerStrip powerStrips[MAX_STRIPS];
 uint8_t stripCount = 0;
 WebServer server(80);
 Preferences prefs;
-SystemState globalState = SystemState::Off;
+volatile SystemState globalState = SystemState::Off;
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+// --- Async command processing ---
+// Web handlers and buttons enqueue commands; the network task executes them.
+enum class CmdType : uint8_t { SequenceAll, SingleRack };
+struct Command {
+  CmdType type;
+  uint8_t rackIndex;
+  bool turnOn;
+};
+QueueHandle_t cmdQueue;
+SemaphoreHandle_t stateMutex;  // guards powerStrips[] contents (Strings)
 
 // --- Prototypes ---
 void handleRoot();
 void handleStatus();
 void handleSaveConfig();
+void handleButtons();
 void updateStateIndicator();
-bool applyCommandSequentially(const String& command);
+void enqueueCommand(const Command& cmd);
 SystemState calculateGlobalState();
 void loadConfig();
+void networkTask(void* arg);
 
 #if USE_ETHERNET
 bool eth_connected = false;
@@ -79,6 +95,9 @@ void setup() {
   pixels.setBrightness(50);
   pixels.show();
 
+  stateMutex = xSemaphoreCreateMutex();
+  cmdQueue = xQueueCreate(8, sizeof(Command));
+
   loadConfig();
 
 #if USE_ETHERNET
@@ -96,17 +115,16 @@ void setup() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/save_config", HTTP_POST, handleSaveConfig);
-  server.on("/on", HTTP_GET, []() { applyCommandSequentially("ON"); server.send(200, "application/json", "{\"success\":true}"); });
-  server.on("/off", HTTP_GET, []() { applyCommandSequentially("OFF"); server.send(200, "application/json", "{\"success\":true}"); });
+  server.on("/on", HTTP_GET, []() { enqueueCommand({CmdType::SequenceAll, 0, true}); server.send(200, "application/json", "{\"success\":true}"); });
+  server.on("/off", HTTP_GET, []() { enqueueCommand({CmdType::SequenceAll, 0, false}); server.send(200, "application/json", "{\"success\":true}"); });
 
   // Independent Rack Control
   server.on(UriBraces("/rack/{}/{}"), HTTP_GET, []() {
     int index = server.pathArg(0).toInt();
     String cmd = server.pathArg(1);
     if (index >= 0 && index < stripCount) {
-      bool success = sendBatchCommand(powerStrips[index].ip, cmd.equalsIgnoreCase("on") ? "ON" : "OFF");
-      server.send(success ? 200 : 502, "application/json", "{\"success\":" + String(success ? "true" : "false") + "}");
-      pollStrip(powerStrips[index]);
+      enqueueCommand({CmdType::SingleRack, (uint8_t)index, cmd.equalsIgnoreCase("on")});
+      server.send(200, "application/json", "{\"success\":true}");
     } else { server.send(404); }
   });
 
@@ -118,53 +136,120 @@ void setup() {
     deserializeJson(doc, server.arg("plain"));
     String newName = doc["name"].as<String>();
     if (index >= 0 && index < stripCount && newName.length() > 0) {
+      xSemaphoreTake(stateMutex, portMAX_DELAY);
+      String ip = powerStrips[index].ip;
+      xSemaphoreGive(stateMutex);
       HTTPClient http;
-      http.begin("http://" + powerStrips[index].ip + "/restapi/relay/outlets/" + String(oid) + "/name/");
+      http.setConnectTimeout(1000);
+      http.begin("http://" + ip + "/restapi/relay/outlets/" + String(oid) + "/name/");
       http.setAuthorization(DLI_USER, DLI_PASS);
       int code = http.PUT("{\"value\":\"" + newName + "\"}");
       http.end();
-      server.send(code == 200 || code == 204 ? 200 : 502);
-      pollStrip(powerStrips[index]);
+      if (code == 200 || code == 204) {
+        // Update locally; the periodic poll will confirm.
+        xSemaphoreTake(stateMutex, portMAX_DELAY);
+        if (oid >= 0 && oid < 8) powerStrips[index].outlets[oid].name = newName;
+        xSemaphoreGive(stateMutex);
+        server.send(200);
+      } else server.send(502);
     } else { server.send(400); }
   });
 
   server.begin();
+
+  xTaskCreatePinnedToCore(networkTask, "net", 12288, nullptr, 1, nullptr, 0);
+
   Serial.println("\nReady.");
 }
 
 void loop() {
   server.handleClient();
-  static unsigned long lastPoll = 0;
-  static uint8_t currentStrip = 0;
-  if (stripCount > 0 && millis() - lastPoll >= POLL_INTERVAL_MS) {
-    lastPoll = millis();
-    if (globalState != SystemState::Sequencing) {
-      pollStrip(powerStrips[currentStrip]);
-      currentStrip = (currentStrip + 1) % stripCount;
-      globalState = calculateGlobalState();
-    }
-  }
+  handleButtons();
   updateStateIndicator();
+}
 
-  // Master Button
-  if (digitalRead(MASTER_BUTTON_PIN) == LOW) {
-    delay(50);
-    if (digitalRead(MASTER_BUTTON_PIN) == LOW) {
-      applyCommandSequentially(globalState == SystemState::On ? "OFF" : "ON");
-      while (digitalRead(MASTER_BUTTON_PIN) == LOW) { server.handleClient(); delay(10); }
+void enqueueCommand(const Command& cmd) {
+  // Immediate UI feedback; the task recalculates when done.
+  if (cmd.type == CmdType::SequenceAll) globalState = SystemState::Sequencing;
+  xQueueSend(cmdQueue, &cmd, 0);
+}
+
+// Reads a strip's address fields, polls it without holding the lock,
+// then publishes the results.
+void pollStripSafe(uint8_t i) {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  PowerStrip tmp = powerStrips[i];
+  xSemaphoreGive(stateMutex);
+
+  pollStrip(tmp);
+
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  powerStrips[i].workingEndpoint = tmp.workingEndpoint;
+  powerStrips[i].state = tmp.state;
+  powerStrips[i].amps = tmp.amps;
+  powerStrips[i].online = tmp.online;
+  for (int j = 0; j < 8; j++) powerStrips[i].outlets[j] = tmp.outlets[j];
+  // Keep showing Sequencing while commands are still queued.
+  if (uxQueueMessagesWaiting(cmdQueue) == 0) globalState = calculateGlobalState();
+  xSemaphoreGive(stateMutex);
+}
+
+String stripIp(uint8_t i) {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  String ip = powerStrips[i].ip;
+  xSemaphoreGive(stateMutex);
+  return ip;
+}
+
+void networkTask(void* arg) {
+  uint8_t currentStrip = 0;
+  uint32_t lastPoll = 0;
+  Command cmd;
+  for (;;) {
+    if (xQueueReceive(cmdQueue, &cmd, pdMS_TO_TICKS(50)) == pdTRUE) {
+      if (cmd.type == CmdType::SequenceAll) {
+        globalState = SystemState::Sequencing;
+        for (uint8_t i = 0; i < stripCount; i++) {
+          sendBatchCommand(stripIp(i), cmd.turnOn ? "ON" : "OFF");
+          if (i < stripCount - 1) vTaskDelay(pdMS_TO_TICKS(SEQUENCE_DELAY_MS));
+        }
+        for (uint8_t i = 0; i < stripCount; i++) pollStripSafe(i);
+      } else {
+        sendBatchCommand(stripIp(cmd.rackIndex), cmd.turnOn ? "ON" : "OFF");
+        pollStripSafe(cmd.rackIndex);
+      }
+    } else if (stripCount > 0 && millis() - lastPoll >= POLL_INTERVAL_MS) {
+      lastPoll = millis();
+      pollStripSafe(currentStrip);
+      currentStrip = (currentStrip + 1) % stripCount;
+    }
+  }
+}
+
+// Non-blocking edge-triggered buttons with 50ms debounce.
+void handleButtons() {
+  uint32_t now = millis();
+
+  static bool masterPressed = false;
+  static uint32_t masterChanged = 0;
+  bool raw = digitalRead(MASTER_BUTTON_PIN) == LOW;
+  if (raw != masterPressed && now - masterChanged > 50) {
+    masterPressed = raw;
+    masterChanged = now;
+    if (masterPressed && globalState != SystemState::Sequencing) {
+      enqueueCommand({CmdType::SequenceAll, 0, globalState != SystemState::On});
     }
   }
 
-  // Individual Rack Buttons
+  static bool rackPressed[sizeof(RACK_BUTTON_PINS)] = {false};
+  static uint32_t rackChanged[sizeof(RACK_BUTTON_PINS)] = {0};
   for (uint8_t i = 0; i < stripCount && i < sizeof(RACK_BUTTON_PINS); i++) {
-    if (digitalRead(RACK_BUTTON_PINS[i]) == LOW) {
-      delay(50);
-      if (digitalRead(RACK_BUTTON_PINS[i]) == LOW) {
-        String cmd = (powerStrips[i].state == StripState::On) ? "OFF" : "ON";
-        sendBatchCommand(powerStrips[i].ip, cmd);
-        pollStrip(powerStrips[i]);
-        globalState = calculateGlobalState();
-        while (digitalRead(RACK_BUTTON_PINS[i]) == LOW) { server.handleClient(); delay(10); }
+    bool r = digitalRead(RACK_BUTTON_PINS[i]) == LOW;
+    if (r != rackPressed[i] && now - rackChanged[i] > 50) {
+      rackPressed[i] = r;
+      rackChanged[i] = now;
+      if (r) {
+        enqueueCommand({CmdType::SingleRack, i, powerStrips[i].state != StripState::On});
       }
     }
   }
@@ -203,6 +288,7 @@ void handleSaveConfig() {
   delay(500); ESP.restart();
 }
 
+// Caller must hold stateMutex (or be the only writer).
 SystemState calculateGlobalState() {
   bool anyOn = false, anyOff = false, anyError = false;
   for (uint8_t i = 0; i < stripCount; i++) {
@@ -223,6 +309,7 @@ void handleStatus() {
   doc["power"] = sysStrs[(uint8_t)globalState];
   JsonArray strips = doc.createNestedArray("strips");
   float totalCurrent = 0;
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
   for (uint8_t i = 0; i < stripCount; i++) {
     JsonObject s = strips.createNestedObject();
     s["name"] = powerStrips[i].name; s["ip"] = powerStrips[i].ip;
@@ -235,6 +322,7 @@ void handleStatus() {
       o["state"] = powerStrips[i].outlets[j].state;
     }
   }
+  xSemaphoreGive(stateMutex);
   doc["total_current"] = totalCurrent;
   String res; serializeJson(doc, res);
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -246,20 +334,6 @@ void handleRoot() {
   server.send_P(200, "text/html", (const char*)INDEX_HTML, INDEX_HTML_SIZE);
 }
 
-bool applyCommandSequentially(const String& command) {
-  globalState = SystemState::Sequencing;
-  for (uint8_t i = 0; i < stripCount; i++) {
-    sendBatchCommand(powerStrips[i].ip, command);
-    if (i < stripCount - 1) {
-      unsigned long start = millis();
-      while(millis() - start < SEQUENCE_DELAY_MS) { server.handleClient(); updateStateIndicator(); delay(10); }
-    }
-  }
-  for (uint8_t i = 0; i < stripCount; i++) pollStrip(powerStrips[i]);
-  globalState = calculateGlobalState();
-  return true;
-}
-
 void updateStateIndicator() {
   static unsigned long lastToggle = 0;
   static bool flashState = false;
@@ -268,24 +342,34 @@ void updateStateIndicator() {
     flashState = !flashState;
   }
 
+  uint32_t colors[NUM_LEDS];
   for (uint8_t i = 0; i < NUM_LEDS; i++) {
     if (i >= stripCount) {
-      pixels.setPixelColor(i, 0);
+      colors[i] = 0;
       continue;
     }
 
     if (globalState == SystemState::Sequencing) {
-      pixels.setPixelColor(i, flashState ? pixels.Color(0, 0, 255) : 0); // Flashing Blue
+      colors[i] = flashState ? pixels.Color(0, 0, 255) : 0; // Flashing Blue
     } else if (!powerStrips[i].online) {
-      pixels.setPixelColor(i, flashState ? pixels.Color(255, 0, 0) : 0); // Flashing Red
+      colors[i] = flashState ? pixels.Color(255, 0, 0) : 0; // Flashing Red
     } else {
       switch (powerStrips[i].state) {
-        case StripState::On:    pixels.setPixelColor(i, pixels.Color(0, 255, 0)); break;
-        case StripState::Off:   pixels.setPixelColor(i, pixels.Color(20, 0, 0));  break; // Dim red
-        case StripState::Mixed: pixels.setPixelColor(i, pixels.Color(255, 100, 0)); break; // Orange
-        default:                pixels.setPixelColor(i, pixels.Color(10, 10, 10)); break;
+        case StripState::On:    colors[i] = pixels.Color(0, 255, 0); break;
+        case StripState::Off:   colors[i] = pixels.Color(20, 0, 0);  break; // Dim red
+        case StripState::Mixed: colors[i] = pixels.Color(255, 100, 0); break; // Orange
+        default:                colors[i] = pixels.Color(10, 10, 10); break;
       }
     }
   }
-  pixels.show();
+
+  // pixels.show() is slow and interrupt-sensitive; only push when changed.
+  static uint32_t prevColors[NUM_LEDS];
+  static bool firstShow = true;
+  if (firstShow || memcmp(colors, prevColors, sizeof(colors)) != 0) {
+    for (uint8_t i = 0; i < NUM_LEDS; i++) pixels.setPixelColor(i, colors[i]);
+    pixels.show();
+    memcpy(prevColors, colors, sizeof(colors));
+    firstShow = false;
+  }
 }
