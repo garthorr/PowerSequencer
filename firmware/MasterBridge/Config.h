@@ -2,7 +2,15 @@
 #define CONFIG_H
 
 // --- Networking Mode ---
-#define USE_ETHERNET 1  // 1 for WT32-ETH01 / Olimex, 0 for Wi-Fi
+#define USE_ETHERNET 1  // 1 for wired Ethernet boards, 0 for Wi-Fi
+
+// --- Ethernet Board Selection (only used when USE_ETHERNET == 1) ---
+// ETH_BOARD_WT32_ETH01_OLIMEX : WT32-ETH01 / Olimex ESP32-POE (classic ESP32, LAN8720 PHY)
+// ETH_BOARD_ESP32_P4_ETH      : Waveshare ESP32-P4-ETH (ESP32-P4, IP101 PHY)
+// Requires arduino-esp32 core 3.x or newer for ESP32-P4 support.
+#define ETH_BOARD_WT32_ETH01_OLIMEX 1
+#define ETH_BOARD_ESP32_P4_ETH      2
+#define ETH_BOARD ETH_BOARD_ESP32_P4_ETH
 
 // --- Wi-Fi Settings ---
 const char* WIFI_SSID = "YOUR_WIFI_SSID";
