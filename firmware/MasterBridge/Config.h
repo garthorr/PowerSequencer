@@ -16,6 +16,14 @@
 const char* WIFI_SSID = "YOUR_WIFI_SSID";
 const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
 
+// --- Static IP (applies to both Ethernet and Wi-Fi) ---
+// Set USE_STATIC_IP to 1 to use the addresses below; 0 uses DHCP.
+#define USE_STATIC_IP 0
+#define STATIC_IP      192, 168, 0, 50
+#define STATIC_GATEWAY 192, 168, 0, 1
+#define STATIC_SUBNET  255, 255, 255, 0
+#define STATIC_DNS     192, 168, 0, 1
+
 // --- DLI Credentials ---
 const char* DLI_USER = "admin";
 const char* DLI_PASS = "1234";
@@ -26,12 +34,23 @@ const char* DLI_PASS = "1234";
 #define OTA_PASSWORD ""
 
 // --- Hardware ---
+#define NUM_LEDS 8  // Support up to 8 racks
+
+#if USE_ETHERNET && (ETH_BOARD == ETH_BOARD_ESP32_P4_ETH)
+// Waveshare ESP32-P4-ETH header. The classic-ESP32 pins (12, 35, 36, 39)
+// don't exist on this board. GPIO24/25 (USB D-/D+) and GPIO7/8 (I2C) are
+// left free; remaining header GPIOs (23, 26, 27, 32, 33, 46-48, 54...)
+// are available for expansion.
+#define MASTER_BUTTON_PIN 15
+#define LED_PIN           14
+const uint8_t RACK_BUTTON_PINS[] = {16, 17, 18, 19, 20, 21, 22};
+#else
+// WT32-ETH01 / Olimex ESP32-POE / generic classic ESP32
 #define MASTER_BUTTON_PIN 12
 #define LED_PIN           14
-#define NUM_LEDS          8  // Support up to 8 racks
-
 // Individual Rack Buttons (GPIOs 35, 36, 39 are Input Only)
 const uint8_t RACK_BUTTON_PINS[] = {35, 36, 39, 15, 4, 32, 33};
+#endif
 
 // --- Timing ---
 const uint32_t SEQUENCE_DELAY_MS = 1500;

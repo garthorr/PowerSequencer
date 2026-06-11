@@ -54,6 +54,14 @@ volatile SystemState globalState = SystemState::Off;
 const char* SYS_STATE_NAMES[] = {"off", "on", "mixed", "error", "sequencing", "updating"};
 Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
+// Runtime-configurable GPIO pins. Defaults come from Config.h for the
+// selected board; the dashboard settings page can override them (stored
+// in Preferences, applied after the restart that saving triggers).
+uint8_t masterButtonPin = MASTER_BUTTON_PIN;
+uint8_t ledPin = LED_PIN;
+uint8_t rackButtonPins[MAX_STRIPS];
+uint8_t rackButtonCount = 0;
+
 // --- Async command processing ---
 // Web handlers and buttons enqueue commands; the network task executes them.
 enum class CmdType : uint8_t { SequenceAll, SingleRack };
@@ -73,6 +81,7 @@ volatile bool otaInProgress = false;
 void handleRoot();
 void handleStatus();
 void handleSaveConfig();
+void handleSavePins();
 void handleButtons();
 void updateStateIndicator();
 void enqueueCommand(const Command& cmd);
@@ -111,23 +120,28 @@ void setup() {
   Serial.begin(115200);
   DiagLog.begin();
   DiagLog.log(String("Boot, reset reason: ") + resetReasonStr());
-  pinMode(MASTER_BUTTON_PIN, INPUT_PULLUP);
-  for (int i = 0; i < sizeof(RACK_BUTTON_PINS); i++) {
-    pinMode(RACK_BUTTON_PINS[i], INPUT_PULLUP);
-  }
-
-  pixels.begin();
-  pixels.setBrightness(50);
-  pixels.show();
 
   stateMutex = xSemaphoreCreateMutex();
   cmdQueue = xQueueCreate(8, sizeof(Command));
 
-  loadConfig();
+  loadConfig();  // also loads the pin assignments used below
+
+  pinMode(masterButtonPin, INPUT_PULLUP);
+  for (int i = 0; i < rackButtonCount; i++) {
+    pinMode(rackButtonPins[i], INPUT_PULLUP);
+  }
+
+  pixels.setPin(ledPin);
+  pixels.begin();
+  pixels.setBrightness(50);
+  pixels.show();
 
 #if USE_ETHERNET
   Network.onEvent(WiFiEvent);
   ETH.setHostname(OTA_HOSTNAME);
+#if USE_STATIC_IP
+  ETH.config(IPAddress(STATIC_IP), IPAddress(STATIC_GATEWAY), IPAddress(STATIC_SUBNET), IPAddress(STATIC_DNS));
+#endif
   // arduino-esp32 3.x signature: (type, phy_addr, mdc, mdio, power, clock_mode)
   ETH.begin(ETH_TYPE, ETH_ADDR, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_POWER_PIN, ETH_CLK_MODE);
   unsigned long start = millis();
@@ -137,6 +151,9 @@ void setup() {
 #else
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(OTA_HOSTNAME);
+#if USE_STATIC_IP
+  WiFi.config(IPAddress(STATIC_IP), IPAddress(STATIC_GATEWAY), IPAddress(STATIC_SUBNET), IPAddress(STATIC_DNS));
+#endif
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
   DiagLog.log("WiFi up, IP: " + WiFi.localIP().toString());
@@ -166,6 +183,7 @@ void setup() {
     server.send(200, "text/plain", DiagLog.dump());
   });
   server.on("/save_config", HTTP_POST, handleSaveConfig);
+  server.on("/save_pins", HTTP_POST, handleSavePins);
   server.on("/on", HTTP_GET, []() { enqueueCommand({CmdType::SequenceAll, 0, true}); server.send(200, "application/json", "{\"success\":true}"); });
   server.on("/off", HTTP_GET, []() { enqueueCommand({CmdType::SequenceAll, 0, false}); server.send(200, "application/json", "{\"success\":true}"); });
 
@@ -317,7 +335,7 @@ void handleButtons() {
 
   static bool masterPressed = false;
   static uint32_t masterChanged = 0;
-  bool raw = digitalRead(MASTER_BUTTON_PIN) == LOW;
+  bool raw = digitalRead(masterButtonPin) == LOW;
   if (raw != masterPressed && now - masterChanged > 50) {
     masterPressed = raw;
     masterChanged = now;
@@ -326,10 +344,10 @@ void handleButtons() {
     }
   }
 
-  static bool rackPressed[sizeof(RACK_BUTTON_PINS)] = {false};
-  static uint32_t rackChanged[sizeof(RACK_BUTTON_PINS)] = {0};
-  for (uint8_t i = 0; i < stripCount && i < sizeof(RACK_BUTTON_PINS); i++) {
-    bool r = digitalRead(RACK_BUTTON_PINS[i]) == LOW;
+  static bool rackPressed[MAX_STRIPS] = {false};
+  static uint32_t rackChanged[MAX_STRIPS] = {0};
+  for (uint8_t i = 0; i < stripCount && i < rackButtonCount; i++) {
+    bool r = digitalRead(rackButtonPins[i]) == LOW;
     if (r != rackPressed[i] && now - rackChanged[i] > 50) {
       rackPressed[i] = r;
       rackChanged[i] = now;
@@ -340,9 +358,19 @@ void handleButtons() {
   }
 }
 
+bool validPin(int p) { return p >= 0 && p <= 54; }
+
 void loadConfig() {
+  // Pin defaults from Config.h for the selected board.
+  rackButtonCount = sizeof(RACK_BUTTON_PINS);
+  if (rackButtonCount > MAX_STRIPS) rackButtonCount = MAX_STRIPS;
+  memcpy(rackButtonPins, RACK_BUTTON_PINS, rackButtonCount);
+
   prefs.begin("sequencer", false);
   String json = prefs.getString("config", "");
+  String pinJson = prefs.getString("pins", "");
+  prefs.end();
+
   if (json.length() > 0) {
     StaticJsonDocument<2048> doc;
     if (!deserializeJson(doc, json)) {
@@ -356,11 +384,33 @@ void loadConfig() {
       }
     }
   }
-  prefs.end();
   if (stripCount == 0) {
     powerStrips[0] = {"Rack 1", "192.168.0.101", "", StripState::Unknown, 0, false};
     stripCount = 1;
   }
+
+  if (pinJson.length() > 0) {
+    StaticJsonDocument<256> doc;
+    if (!deserializeJson(doc, pinJson)) {
+      if (validPin(doc["master"] | -1)) masterButtonPin = doc["master"];
+      if (validPin(doc["led"] | -1)) ledPin = doc["led"];
+      JsonArray arr = doc["rack"];
+      if (!arr.isNull()) {
+        rackButtonCount = 0;
+        for (JsonVariant v : arr) {
+          if (rackButtonCount >= MAX_STRIPS || !validPin(v | -1)) break;
+          rackButtonPins[rackButtonCount++] = v.as<uint8_t>();
+        }
+      }
+    }
+  }
+  String pinList;
+  for (uint8_t i = 0; i < rackButtonCount; i++) {
+    if (i) pinList += ",";
+    pinList += String(rackButtonPins[i]);
+  }
+  DiagLog.log("Pins: master=" + String(masterButtonPin) + " led=" + String(ledPin) +
+              " rack=" + pinList + (pinJson.length() ? " (saved)" : " (defaults)"));
 }
 
 void handleSaveConfig() {
@@ -369,6 +419,21 @@ void handleSaveConfig() {
   prefs.begin("sequencer", false);
   prefs.putString("config", server.arg("plain"));
   prefs.end();
+  server.send(200);
+  delay(500); ESP.restart();
+}
+
+void handleSavePins() {
+  StaticJsonDocument<256> doc;
+  if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "text/plain", "Invalid JSON"); return; }
+  if (!validPin(doc["master"] | -1) || !validPin(doc["led"] | -1) || doc["rack"].as<JsonArray>().isNull()) {
+    server.send(400, "text/plain", "Need master, led and rack[] GPIO numbers");
+    return;
+  }
+  prefs.begin("sequencer", false);
+  prefs.putString("pins", server.arg("plain"));
+  prefs.end();
+  DiagLog.log("Pin config saved, restarting");
   server.send(200);
   delay(500); ESP.restart();
 }
@@ -410,6 +475,11 @@ void handleStatus() {
   }
   xSemaphoreGive(stateMutex);
   doc["total_current"] = totalCurrent;
+  JsonObject pins = doc.createNestedObject("pins");
+  pins["master"] = masterButtonPin;
+  pins["led"] = ledPin;
+  JsonArray rackPins = pins.createNestedArray("rack");
+  for (uint8_t i = 0; i < rackButtonCount; i++) rackPins.add(rackButtonPins[i]);
   String res; serializeJson(doc, res);
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "application/json", res);

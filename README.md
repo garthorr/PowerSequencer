@@ -19,10 +19,18 @@ This project is built on a **modular architecture** designed for high stability 
 
 The bridge is designed to be a reliable hardware appliance.
 
-### Pinout
+### Pinout (WT32-ETH01 / Olimex / classic ESP32)
 *   **Master Button**: Momentary button between **IO12** and **GND**.
 *   **Rack Buttons**: Individual buttons for racks 1-7 on **GPIOs 35, 36, 39, 15, 4, 32, 33**.
 *   **Status LEDs (WS2811)**: Data pin on **IO14**.
+
+### Pinout (Waveshare ESP32-P4-ETH)
+The classic-ESP32 pins above don't exist on the P4 header, so this board uses its own map (selected automatically by `ETH_BOARD` in `Config.h`):
+*   **Master Button**: Momentary button between **GPIO15** and **GND**.
+*   **Rack Buttons**: Individual buttons for racks 1-7 on **GPIOs 16, 17, 18, 19, 20, 21, 22**.
+*   **Status LEDs (NeoPixel/WS281x)**: Data pin on **GPIO14**.
+
+All pin assignments above are just the firmware defaults — they can be changed at runtime from the dashboard under **Settings → Hardware Pins** (stored in flash, survives reflashes).
     *   **Green**: Rack is ON.
     *   **Dim Red**: Rack is OFF.
     *   **Orange**: Mixed outlet states.
@@ -46,6 +54,7 @@ For development or testing without hardware:
 1.  Open `firmware/MasterBridge/MasterBridge.ino` in the Arduino IDE.
 2.  Install the **ArduinoJson** and **Adafruit_NeoPixel** libraries.
 3.  Edit `Config.h` to set your networking mode (Wired/Wi-Fi) and credentials.
+    *   Optional: set `USE_STATIC_IP` to `1` and fill in `STATIC_IP` / `STATIC_GATEWAY` / `STATIC_SUBNET` / `STATIC_DNS` to give the bridge a fixed address (default is DHCP).
     *   For wired Ethernet boards, also set `ETH_BOARD` to match your hardware:
         *   `ETH_BOARD_WT32_ETH01_OLIMEX` — WT32-ETH01 / Olimex ESP32-POE (LAN8720 PHY)
         *   `ETH_BOARD_ESP32_P4_ETH` — Waveshare ESP32-P4-ETH (IP101 PHY)
