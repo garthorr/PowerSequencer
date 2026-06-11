@@ -26,6 +26,11 @@ def index():
 def status():
     return jsonify(state_manager.get_json())
 
+@app.route("/log")
+def log():
+    # The firmware serves its diagnostic ring buffer here.
+    return "Simulator: no diagnostic log available.", 200, {"Content-Type": "text/plain"}
+
 @app.route("/on")
 def sequence_on():
     sequence_engine.trigger_sequence("ON")
