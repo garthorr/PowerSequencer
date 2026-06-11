@@ -12,6 +12,7 @@
 #include <uri/UriBraces.h>
 #include <Preferences.h>
 #include <Adafruit_NeoPixel.h>
+#include <ArduinoOTA.h>
 
 #include "Config.h"
 #include "Types.h"
@@ -62,6 +63,10 @@ struct Command {
 QueueHandle_t cmdQueue;
 SemaphoreHandle_t stateMutex;  // guards powerStrips[] contents (Strings)
 
+// Set while an OTA flash is in progress; pauses strip I/O and the LED/web
+// loop so the upload gets the CPU and flash bus to itself.
+volatile bool otaInProgress = false;
+
 // --- Prototypes ---
 void handleRoot();
 void handleStatus();
@@ -102,15 +107,32 @@ void setup() {
 
 #if USE_ETHERNET
   Network.onEvent(WiFiEvent);
+  ETH.setHostname(OTA_HOSTNAME);
   // arduino-esp32 3.x signature: (type, phy_addr, mdc, mdio, power, clock_mode)
   ETH.begin(ETH_TYPE, ETH_ADDR, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_POWER_PIN, ETH_CLK_MODE);
   unsigned long start = millis();
   while (!eth_connected && millis() - start < 10000) { delay(500); Serial.print("."); }
 #else
   WiFi.mode(WIFI_STA);
+  WiFi.setHostname(OTA_HOSTNAME);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
 #endif
+
+  ArduinoOTA.setHostname(OTA_HOSTNAME);
+  if (strlen(OTA_PASSWORD) > 0) ArduinoOTA.setPassword(OTA_PASSWORD);
+  ArduinoOTA.onStart([]() {
+    otaInProgress = true;
+    globalState = SystemState::Updating;
+  });
+  ArduinoOTA.onEnd([]() { otaInProgress = false; });
+  ArduinoOTA.onError([](ota_error_t error) {
+    otaInProgress = false;
+    xSemaphoreTake(stateMutex, portMAX_DELAY);
+    globalState = calculateGlobalState();
+    xSemaphoreGive(stateMutex);
+  });
+  ArduinoOTA.begin();
 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
@@ -163,6 +185,11 @@ void setup() {
 }
 
 void loop() {
+  ArduinoOTA.handle();
+  if (otaInProgress) {
+    updateStateIndicator();
+    return;
+  }
   server.handleClient();
   handleButtons();
   updateStateIndicator();
@@ -206,6 +233,10 @@ void networkTask(void* arg) {
   uint32_t lastPoll = 0;
   Command cmd;
   for (;;) {
+    if (otaInProgress) {
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
     if (xQueueReceive(cmdQueue, &cmd, pdMS_TO_TICKS(50)) == pdTRUE) {
       if (cmd.type == CmdType::SequenceAll) {
         globalState = SystemState::Sequencing;
@@ -305,7 +336,7 @@ SystemState calculateGlobalState() {
 
 void handleStatus() {
   DynamicJsonDocument doc(4096);
-  const char* sysStrs[] = {"off", "on", "mixed", "error", "sequencing"};
+  const char* sysStrs[] = {"off", "on", "mixed", "error", "sequencing", "updating"};
   doc["power"] = sysStrs[(uint8_t)globalState];
   JsonArray strips = doc.createNestedArray("strips");
   float totalCurrent = 0;
@@ -349,7 +380,9 @@ void updateStateIndicator() {
       continue;
     }
 
-    if (globalState == SystemState::Sequencing) {
+    if (globalState == SystemState::Updating) {
+      colors[i] = flashState ? pixels.Color(255, 0, 255) : 0; // Flashing Purple
+    } else if (globalState == SystemState::Sequencing) {
       colors[i] = flashState ? pixels.Color(0, 0, 255) : 0; // Flashing Blue
     } else if (!powerStrips[i].online) {
       colors[i] = flashState ? pixels.Color(255, 0, 0) : 0; // Flashing Red

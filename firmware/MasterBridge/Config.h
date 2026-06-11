@@ -20,6 +20,11 @@ const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
 const char* DLI_USER = "admin";
 const char* DLI_PASS = "1234";
 
+// --- OTA Updates (Arduino IDE / arduino-cli "Network Port") ---
+#define OTA_HOSTNAME "powersequencer"
+// Leave empty to allow unauthenticated OTA on the LAN.
+#define OTA_PASSWORD ""
+
 // --- Hardware ---
 #define MASTER_BUTTON_PIN 12
 #define LED_PIN           14
