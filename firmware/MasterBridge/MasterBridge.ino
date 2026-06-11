@@ -52,7 +52,7 @@ WebServer server(80);
 Preferences prefs;
 volatile SystemState globalState = SystemState::Off;
 const char* SYS_STATE_NAMES[] = {"off", "on", "mixed", "error", "sequencing", "updating"};
-Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, LED_TYPE);
 
 // Runtime-configurable GPIO pins. Defaults come from Config.h for the
 // selected board; the dashboard settings page can override them (stored
