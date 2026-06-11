@@ -46,6 +46,10 @@ For development or testing without hardware:
 1.  Open `firmware/MasterBridge/MasterBridge.ino` in the Arduino IDE.
 2.  Install the **ArduinoJson** and **Adafruit_NeoPixel** libraries.
 3.  Edit `Config.h` to set your networking mode (Wired/Wi-Fi) and credentials.
+    *   For wired Ethernet boards, also set `ETH_BOARD` to match your hardware:
+        *   `ETH_BOARD_WT32_ETH01_OLIMEX` — WT32-ETH01 / Olimex ESP32-POE (LAN8720 PHY)
+        *   `ETH_BOARD_ESP32_P4_ETH` — Waveshare ESP32-P4-ETH (IP101 PHY)
+    *   ESP32-P4 boards require **arduino-esp32 core 3.x or newer** (install/update the "esp32" board package via Boards Manager).
 4.  Flash to your hardware.
 
 ---

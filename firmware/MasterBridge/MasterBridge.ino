@@ -18,12 +18,23 @@
 
 #if USE_ETHERNET
 #  include <ETH.h>
-#  define ETH_ADDR  1
-#  define ETH_POWER_PIN 16
-#  define ETH_MDC_PIN   23
-#  define ETH_MDIO_PIN  18
-#  define ETH_TYPE      ETH_PHY_LAN8720
-#  define ETH_CLK_MODE  ETH_CLOCK_GPIO0_IN
+#  if ETH_BOARD == ETH_BOARD_ESP32_P4_ETH
+     // Waveshare ESP32-P4-ETH: IP101 PHY, RMII, external 50MHz REF_CLK on GPIO50
+#    define ETH_ADDR      1
+#    define ETH_MDC_PIN   31
+#    define ETH_MDIO_PIN  52
+#    define ETH_POWER_PIN 51
+#    define ETH_TYPE      ETH_PHY_IP101
+#    define ETH_CLK_MODE  EMAC_CLK_EXT_IN
+#  else
+     // WT32-ETH01 / Olimex ESP32-POE: LAN8720 PHY, RMII, REF_CLK on GPIO0
+#    define ETH_ADDR      1
+#    define ETH_POWER_PIN 16
+#    define ETH_MDC_PIN   23
+#    define ETH_MDIO_PIN  18
+#    define ETH_TYPE      ETH_PHY_LAN8720
+#    define ETH_CLK_MODE  ETH_CLOCK_GPIO0_IN
+#  endif
 #else
 #  include <WiFi.h>
 #endif
@@ -72,7 +83,8 @@ void setup() {
 
 #if USE_ETHERNET
   WiFi.onEvent(WiFiEvent);
-  ETH.begin(ETH_ADDR, ETH_POWER_PIN, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_TYPE, ETH_CLK_MODE);
+  // arduino-esp32 3.x signature: (type, phy_addr, mdc, mdio, power, clock_mode)
+  ETH.begin(ETH_TYPE, ETH_ADDR, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_POWER_PIN, ETH_CLK_MODE);
   unsigned long start = millis();
   while (!eth_connected && millis() - start < 10000) { delay(500); Serial.print("."); }
 #else
