@@ -16,6 +16,14 @@
 const char* WIFI_SSID = "YOUR_WIFI_SSID";
 const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
 
+// --- Static IP (applies to both Ethernet and Wi-Fi) ---
+// Set USE_STATIC_IP to 1 to use the addresses below; 0 uses DHCP.
+#define USE_STATIC_IP 0
+#define STATIC_IP      192, 168, 0, 50
+#define STATIC_GATEWAY 192, 168, 0, 1
+#define STATIC_SUBNET  255, 255, 255, 0
+#define STATIC_DNS     192, 168, 0, 1
+
 // --- DLI Credentials ---
 const char* DLI_USER = "admin";
 const char* DLI_PASS = "1234";

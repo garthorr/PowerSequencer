@@ -128,6 +128,9 @@ void setup() {
 #if USE_ETHERNET
   Network.onEvent(WiFiEvent);
   ETH.setHostname(OTA_HOSTNAME);
+#if USE_STATIC_IP
+  ETH.config(IPAddress(STATIC_IP), IPAddress(STATIC_GATEWAY), IPAddress(STATIC_SUBNET), IPAddress(STATIC_DNS));
+#endif
   // arduino-esp32 3.x signature: (type, phy_addr, mdc, mdio, power, clock_mode)
   ETH.begin(ETH_TYPE, ETH_ADDR, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_POWER_PIN, ETH_CLK_MODE);
   unsigned long start = millis();
@@ -137,6 +140,9 @@ void setup() {
 #else
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(OTA_HOSTNAME);
+#if USE_STATIC_IP
+  WiFi.config(IPAddress(STATIC_IP), IPAddress(STATIC_GATEWAY), IPAddress(STATIC_SUBNET), IPAddress(STATIC_DNS));
+#endif
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
   DiagLog.log("WiFi up, IP: " + WiFi.localIP().toString());

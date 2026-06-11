@@ -46,6 +46,7 @@ For development or testing without hardware:
 1.  Open `firmware/MasterBridge/MasterBridge.ino` in the Arduino IDE.
 2.  Install the **ArduinoJson** and **Adafruit_NeoPixel** libraries.
 3.  Edit `Config.h` to set your networking mode (Wired/Wi-Fi) and credentials.
+    *   Optional: set `USE_STATIC_IP` to `1` and fill in `STATIC_IP` / `STATIC_GATEWAY` / `STATIC_SUBNET` / `STATIC_DNS` to give the bridge a fixed address (default is DHCP).
     *   For wired Ethernet boards, also set `ETH_BOARD` to match your hardware:
         *   `ETH_BOARD_WT32_ETH01_OLIMEX` — WT32-ETH01 / Olimex ESP32-POE (LAN8720 PHY)
         *   `ETH_BOARD_ESP32_P4_ETH` — Waveshare ESP32-P4-ETH (IP101 PHY)
