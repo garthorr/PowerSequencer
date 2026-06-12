@@ -36,10 +36,11 @@ const char* DLI_PASS = "1234";
 // --- Hardware ---
 #define NUM_LEDS 8  // Support up to 8 racks
 
-// LED color order + data rate. Adafruit 5mm/8mm thru-hole NeoPixels are
-// RGB at 400 KHz; most SMD pixels and strips are GRB at 800 KHz
-// (NEO_GRB + NEO_KHZ800). Swap if colors come out wrong.
-#define LED_TYPE (NEO_RGB + NEO_KHZ400)
+// LED color order + data rate. Most NeoPixels (including Adafruit's RGB
+// thru-hole 5mm/8mm pixels) are WS2812-compatible at 800 KHz; only the
+// color order differs from the GRB SMD norm. If colors are stuck/garbled
+// rather than just swapped, try NEO_KHZ400 instead.
+#define LED_TYPE (NEO_RGB + NEO_KHZ800)
 
 #if USE_ETHERNET && (ETH_BOARD == ETH_BOARD_ESP32_P4_ETH)
 // Waveshare ESP32-P4-ETH header. The classic-ESP32 pins (12, 35, 36, 39)
