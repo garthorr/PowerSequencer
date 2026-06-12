@@ -27,7 +27,7 @@ The bridge is designed to be a reliable hardware appliance.
 *   All buttons are momentary switches wired between the GPIO and **GND** (internal pullups, no external resistors needed).
 
 ### Status LEDs (NeoPixel / WS281x)
-One pixel per rack, data line on a single GPIO. The color order and data rate are set by `LED_TYPE` in `Config.h` — the default `NEO_RGB + NEO_KHZ400` matches Adafruit 5mm/8mm thru-hole NeoPixels; use `NEO_GRB + NEO_KHZ800` for most SMD strips/pixels.
+One pixel per rack, data line on a single GPIO. The color order and data rate are set by `LED_TYPE` in `Config.h` — the default `NEO_RGB + NEO_KHZ800` matches Adafruit's RGB thru-hole NeoPixels; use `NEO_GRB + NEO_KHZ800` for most SMD strips/pixels. If LEDs stop updating (stuck/garbled colors) rather than just showing swapped colors, try `NEO_KHZ400`.
 *   **Green**: Rack is ON.
 *   **Dim Red**: Rack is OFF.
 *   **Orange**: Mixed outlet states.
